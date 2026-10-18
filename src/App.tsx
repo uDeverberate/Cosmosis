@@ -3,6 +3,7 @@ import { useAcademyStore, getCadetRank } from './store/useAcademyStore';
 import { AcademyTab } from './types/academy';
 import { COSMIC_FUN_FACTS_TICKER } from './data/spaceAcademyData';
 import { CosmicExplorer3D } from './components/CosmicExplorer3D';
+import { HolographicCommandMatrix } from './components/HolographicCommandMatrix';
 import { StoryChronicles } from './components/StoryChronicles';
 import { InteractiveGuides } from './components/InteractiveGuides';
 import { SpaceGamesArcade } from './components/SpaceGamesArcade';
@@ -21,6 +22,7 @@ import {
   VolumeX,
   HelpCircle,
   RefreshCw,
+  ArrowLeft,
 } from 'lucide-react';
 
 export const App: React.FC = () => {
@@ -37,6 +39,9 @@ export const App: React.FC = () => {
     clearToast,
   } = useAcademyStore();
 
+  const [viewMode, setViewMode] = useState<'solar-system' | 'planet-closeup' | 'spacecraft'>('solar-system');
+  const [selectedPlanetId, setSelectedPlanetId] = useState<string>('earth');
+  const [selectedCraftId, setSelectedCraftId] = useState<string>('voyager1');
   const [isMuted, setIsMuted] = useState(false);
   const [factIndex, setFactIndex] = useState(0);
 
@@ -61,65 +66,125 @@ export const App: React.FC = () => {
     return () => clearInterval(interval);
   }, []);
 
+  // Global ESC key listener to slide away decks or return to 3D cockpit
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) return;
+      if (e.key === 'Escape') {
+        if (activeTab !== 'explorer') {
+          soundFX.playClick();
+          setActiveTab('explorer');
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [activeTab, setActiveTab]);
+
   const navTabs: { id: AcademyTab; label: string; icon: React.ReactNode }[] = [
     {
       id: 'explorer',
       label: '3D Observatory',
-      icon: <Orbit className="h-4 w-4" />,
+      icon: <Orbit className="h-3.5 w-3.5" />,
     },
     {
       id: 'stories',
-      label: 'Mission Stories (6)',
-      icon: <BookOpen className="h-4 w-4" />,
+      label: 'Chronicles (6)',
+      icon: <BookOpen className="h-3.5 w-3.5" />,
     },
     {
       id: 'guides',
-      label: 'Interactive Labs',
-      icon: <Compass className="h-4 w-4" />,
+      label: 'Labs (4)',
+      icon: <Compass className="h-3.5 w-3.5" />,
     },
     {
       id: 'games',
-      label: 'Simulators & Trivia',
-      icon: <Gamepad2 className="h-4 w-4" />,
+      label: 'Arcade (5)',
+      icon: <Gamepad2 className="h-3.5 w-3.5" />,
     },
   ];
 
   return (
-    <div className="min-h-screen flex flex-col starfield-bg text-slate-100 select-none">
-      {/* Unified Single-Row Clean Top Navigation Header */}
-      <header className="sticky top-0 z-40 bg-space-950/85 backdrop-blur-xl border-b border-slate-800/80 px-4 sm:px-6 py-3">
-        <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">
-          {/* Left: Clean Brand Identity */}
-          <div className="flex items-center gap-3">
-            <div className="h-9 w-9 rounded-xl bg-cyan-500/10 border border-cyan-400/30 flex items-center justify-center text-cyan-400">
-              <Orbit className="h-5 w-5 animate-spin" style={{ animationDuration: '16s' }} />
+    <div className="min-h-screen w-screen overflow-hidden bg-black text-slate-100 select-none relative font-sans">
+      {/* 1. Full-Screen Edge-to-Edge 3D Cosmic Universe Backdrop */}
+      <CosmicExplorer3D
+        externalPlanetId={selectedPlanetId}
+        externalViewMode={viewMode}
+        externalCraftId={selectedCraftId}
+        onViewModeChange={setViewMode}
+        onPlanetSelect={setSelectedPlanetId}
+        onCraftSelect={setSelectedCraftId}
+        isBackgroundMode={activeTab !== 'explorer'}
+      />
+
+      {/* 2. Floating Aerospace Command Capsule Header (Edge-to-Edge) */}
+      <header className="fixed top-3 inset-x-3 sm:inset-x-6 z-40 flex items-center justify-between pointer-events-none">
+        {/* Left: Clean Brand Identity Pill */}
+        <div className="pointer-events-auto flex items-center gap-2.5 px-3 py-1.5 rounded-full bg-space-950/85 backdrop-blur-xl border border-slate-800/80 shadow-2xl">
+          <button
+            onClick={() => {
+              soundFX.playClick();
+              setActiveTab('explorer');
+              setViewMode('solar-system');
+            }}
+            className="flex items-center gap-2 group text-left"
+            title="Reset to Full Solar System"
+          >
+            <div className="h-7 w-7 rounded-full bg-[#ff3b21]/15 border border-[#ff3b21]/30 flex items-center justify-center text-[#ff3b21]">
+              <Orbit className="h-4 w-4 group-hover:rotate-180 transition-transform duration-700" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-sm sm:text-base font-extrabold tracking-wider text-white">
+              <div className="flex items-center gap-1.5 leading-none">
+                <span className="text-xs sm:text-sm font-extrabold tracking-wider text-white">
                   COSMOSIS
-                </h1>
-                <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-300 border border-cyan-500/20">
-                  v3.0 Academy
+                </span>
+                <span className="text-[9px] font-mono uppercase px-1 py-0.2 rounded bg-[#ff3b21]/20 text-[#ff3b21] font-bold">
+                  v3.0
                 </span>
               </div>
-              <p className="text-[11px] text-slate-400 hidden sm:block">
-                Interactive 3D Space Encyclopedia, Chronicles & Flight Simulators
-              </p>
             </div>
-          </div>
+          </button>
+        </div>
 
-          {/* Center: Clean Segmented Module Switcher */}
-          <nav className="flex items-center bg-space-900/90 p-1 rounded-xl border border-slate-800/90">
+        {/* Center: Top Dropdown Matrix Pill */}
+        <div className="pointer-events-auto">
+          <HolographicCommandMatrix
+            onSelectPlanet={(id) => {
+              setSelectedPlanetId(id);
+              setViewMode('planet-closeup');
+              setActiveTab('explorer');
+            }}
+            onSelectCraft={(id) => {
+              setSelectedCraftId(id);
+              setViewMode('spacecraft');
+              setActiveTab('explorer');
+            }}
+            onReturnToSolarSystem={() => {
+              setViewMode('solar-system');
+              setActiveTab('explorer');
+            }}
+            currentPlanetId={selectedPlanetId}
+            currentCraftId={selectedCraftId}
+            isCloseup={viewMode === 'planet-closeup'}
+          />
+        </div>
+
+        {/* Right: Module Switcher & Cadet Profile Utility Cluster */}
+        <div className="pointer-events-auto flex items-center gap-1.5">
+          {/* Quick Module Switcher (Segmented Glass Tabs) */}
+          <nav className="hidden lg:flex items-center bg-space-950/85 backdrop-blur-xl p-1 rounded-full border border-slate-800/80 shadow-2xl">
             {navTabs.map((tab) => {
               const isActive = activeTab === tab.id;
               return (
                 <button
                   key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-2 ${
+                  onClick={() => {
+                    soundFX.playClick();
+                    setActiveTab(tab.id);
+                  }}
+                  className={`px-3 py-1 rounded-full text-[11px] font-mono transition-all flex items-center gap-1.5 ${
                     isActive
-                      ? 'bg-cyan-500 text-slate-950 font-semibold shadow-sm'
+                      ? 'bg-cyan-500 text-slate-950 font-bold shadow-sm'
                       : 'text-slate-400 hover:text-slate-200'
                   }`}
                 >
@@ -130,100 +195,120 @@ export const App: React.FC = () => {
             })}
           </nav>
 
-          {/* Right: Compact Utility Cluster & Cadet Profile Pill */}
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => openWalkthrough(0)}
-              className="micro-btn px-2.5 py-1.5 rounded-lg bg-space-900 hover:bg-space-800 border border-slate-800 text-xs text-slate-300 hover:text-white flex items-center gap-1.5"
-              title="Interactive Orientation Tour"
-            >
-              <HelpCircle className="h-3.5 w-3.5 text-cyan-400" />
-              <span className="hidden md:inline">Tour</span>
-            </button>
+          <button
+            onClick={() => openWalkthrough(0)}
+            className="micro-btn px-2.5 py-1.5 rounded-full bg-space-950/85 hover:bg-space-900 border border-slate-800 text-[11px] font-mono text-slate-300 hover:text-white flex items-center gap-1 shadow-md"
+            title="Interactive Orientation Tour"
+          >
+            <HelpCircle className="h-3.5 w-3.5 text-cyan-400" />
+            <span className="hidden md:inline">Tour</span>
+          </button>
 
-            <button
-              onClick={() => setGlossaryOpen(true)}
-              className="micro-btn px-2.5 py-1.5 rounded-lg bg-space-900 hover:bg-space-800 border border-slate-800 text-xs text-slate-300 hover:text-white flex items-center gap-1.5"
-              title="20-Term Student Space Dictionary"
-            >
-              <BookOpen className="h-3.5 w-3.5 text-amber-400" />
-              <span className="hidden md:inline">Glossary (20)</span>
-            </button>
+          <button
+            onClick={() => setGlossaryOpen(true)}
+            className="micro-btn px-2.5 py-1.5 rounded-full bg-space-950/85 hover:bg-space-900 border border-slate-800 text-[11px] font-mono text-slate-300 hover:text-white flex items-center gap-1 shadow-md"
+            title="20-Term Student Space Dictionary"
+          >
+            <BookOpen className="h-3.5 w-3.5 text-amber-400" />
+            <span className="hidden md:inline">Glossary</span>
+          </button>
 
-            {/* Cadet Profile, Badges & Diploma Trigger */}
-            <button
-              onClick={() => setProfileModalOpen(true)}
-              className="micro-btn bg-space-900 hover:bg-space-800 border border-slate-700/80 rounded-lg px-3 py-1.5 flex items-center gap-2.5"
-              title="Open Cadet Profile, Badges & Diploma"
-            >
-              <span className="text-sm">{currentRank.icon}</span>
-              <div className="text-left hidden sm:block">
-                <div className="flex items-center gap-1.5 text-[11px] font-medium text-white leading-none">
-                  <span>{cadetName}</span>
-                  <span className="text-cyan-400 font-mono">{xp} XP</span>
-                </div>
-                <div className="w-20 h-1 bg-space-950 rounded-full overflow-hidden mt-1">
-                  <div
-                    className="h-full bg-gradient-to-r from-cyan-400 to-amber-400 transition-all duration-500"
-                    style={{ width: `${progressPercent}%` }}
-                  />
-                </div>
+          {/* Cadet Profile Pill */}
+          <button
+            onClick={() => setProfileModalOpen(true)}
+            className="micro-btn bg-space-950/85 hover:bg-space-900 border border-slate-700/80 rounded-full px-3 py-1.5 flex items-center gap-2 shadow-md"
+            title="Open Cadet Profile, Badges & Diploma"
+          >
+            <span className="text-sm">{currentRank.icon}</span>
+            <div className="text-left hidden xl:block">
+              <div className="flex items-center gap-1.5 text-[10px] font-medium text-white leading-none">
+                <span>{cadetName}</span>
+                <span className="text-cyan-400 font-mono font-bold">{xp} XP</span>
               </div>
-              <div className="flex items-center gap-1 text-[11px] font-mono text-amber-300 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
-                <Award className="h-3 w-3" />
-                <span>{unlockedBadges.length}</span>
+              <div className="w-16 h-1 bg-space-950 rounded-full overflow-hidden mt-1">
+                <div
+                  className="h-full bg-gradient-to-r from-cyan-400 to-amber-400 transition-all duration-500"
+                  style={{ width: `${progressPercent}%` }}
+                />
               </div>
-            </button>
+            </div>
+            <div className="flex items-center gap-1 text-[10px] font-mono text-amber-300 bg-amber-500/10 px-1.5 py-0.5 rounded-full border border-amber-500/20">
+              <Award className="h-3 w-3" />
+              <span>{unlockedBadges.length}</span>
+            </div>
+          </button>
 
-            <button
-              onClick={() => setIsMuted(soundFX.toggleMute())}
-              className="p-2 rounded-lg bg-space-900 hover:bg-space-800 border border-slate-800 text-slate-300"
-              title="Toggle Audio"
-            >
-              {isMuted ? (
-                <VolumeX className="h-4 w-4 text-rose-400" />
-              ) : (
-                <Volume2 className="h-4 w-4 text-cyan-400" />
-              )}
-            </button>
-          </div>
+          <button
+            onClick={() => setIsMuted(soundFX.toggleMute())}
+            className="p-1.5 rounded-full bg-space-950/85 hover:bg-space-900 border border-slate-800 text-slate-300 shadow-md"
+            title="Toggle Audio"
+          >
+            {isMuted ? (
+              <VolumeX className="h-3.5 w-3.5 text-rose-400" />
+            ) : (
+              <Volume2 className="h-3.5 w-3.5 text-cyan-400" />
+            )}
+          </button>
         </div>
       </header>
 
-      {/* Interactive "Did You Know?" Cosmic Fun-Fact Bar */}
-      <div className="bg-space-900/60 border-b border-slate-800/70 px-4 sm:px-6 py-2">
-        <div className="max-w-7xl mx-auto flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono uppercase bg-amber-500/15 text-amber-300 border border-amber-500/30 shrink-0">
-              <Sparkles className="h-3 w-3" />
-              Cosmic Fact #{factIndex + 1}/{COSMIC_FUN_FACTS_TICKER.length}
-            </span>
-            <p className="text-xs text-slate-200 truncate">
-              {COSMIC_FUN_FACTS_TICKER[factIndex]}
-            </p>
+      {/* 3. Slide-In Frosted Tactical Glass Decks for Other Modules (Chronicles, Labs, Arcade) */}
+      {activeTab !== 'explorer' && (
+        <div className="fixed inset-0 z-30 pt-20 px-4 sm:px-8 pb-8 overflow-y-auto bg-space-950/85 backdrop-blur-2xl animate-in fade-in duration-200">
+          <div className="max-w-7xl mx-auto space-y-4">
+            {/* Top Return Banner */}
+            <div className="flex items-center justify-between pb-3.5 border-b border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-ping" />
+                <span className="text-xs font-mono uppercase tracking-widest text-cyan-300 font-bold">
+                  {activeTab === 'stories'
+                    ? 'HISTORIC CHRONICLES // 6 MISSION DIORAMAS'
+                    : activeTab === 'guides'
+                    ? 'TACTICAL LABS // 4 PHYSICS SIMS'
+                    : 'FLIGHT ARCADE // 5 SIMULATORS & TRIVIA'}
+                </span>
+              </div>
+              <button
+                onClick={() => {
+                  soundFX.playClick();
+                  setActiveTab('explorer');
+                }}
+                className="px-4 py-1.5 rounded-full bg-white text-black hover:bg-zinc-200 text-xs font-mono uppercase font-bold flex items-center gap-2 shadow-xl transition-all"
+              >
+                <ArrowLeft className="h-3.5 w-3.5 text-[#ff3b21]" />
+                <span>Return to 3D Cockpit</span>
+                <kbd className="px-1.5 py-0.5 rounded bg-black/20 text-[10px]">ESC</kbd>
+              </button>
+            </div>
+
+            {activeTab === 'stories' && <StoryChronicles />}
+            {activeTab === 'guides' && <InteractiveGuides />}
+            {activeTab === 'games' && <SpaceGamesArcade />}
           </div>
+        </div>
+      )}
+
+      {/* 4. Subtle Floating "Did You Know?" Cosmic Fun-Fact Pill */}
+      {activeTab === 'explorer' && (
+        <div className="fixed bottom-4 right-4 z-20 pointer-events-auto hidden xl:flex items-center gap-2.5 px-3 py-1.5 rounded-full bg-black/85 backdrop-blur-xl border border-slate-800 text-xs shadow-2xl max-w-md">
+          <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
+          <p className="text-[11px] text-zinc-300 truncate">
+            {COSMIC_FUN_FACTS_TICKER[factIndex]}
+          </p>
           <button
             onClick={() => {
               soundFX.playClick();
               setFactIndex((prev) => (prev + 1) % COSMIC_FUN_FACTS_TICKER.length);
             }}
-            className="text-[11px] font-mono text-cyan-400 hover:text-cyan-300 flex items-center gap-1 shrink-0"
+            className="text-[10px] font-mono text-cyan-400 hover:text-cyan-300 shrink-0 ml-1"
+            title="Next Cosmic Fact"
           >
             <RefreshCw className="h-3 w-3" />
-            <span>Next Fact</span>
           </button>
         </div>
-      </div>
+      )}
 
-      {/* Main Workspace Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-5">
-        {activeTab === 'explorer' && <CosmicExplorer3D />}
-        {activeTab === 'stories' && <StoryChronicles />}
-        {activeTab === 'guides' && <InteractiveGuides />}
-        {activeTab === 'games' && <SpaceGamesArcade />}
-      </main>
-
-      {/* Clean Floating XP / Badge Notification Toast */}
+      {/* 5. XP / Badge Notification Toast */}
       {recentToast && (
         <div className="fixed bottom-5 right-5 z-50 max-w-sm bg-space-900/95 backdrop-blur-xl border border-cyan-400/50 rounded-xl p-3.5 shadow-2xl flex items-center gap-3 animate-in fade-in slide-in-from-bottom-4 duration-200">
           <div className="h-10 w-10 rounded-lg bg-cyan-500/15 border border-cyan-400/30 flex items-center justify-center text-xl shrink-0">
