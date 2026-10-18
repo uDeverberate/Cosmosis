@@ -1,0 +1,113 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background-color: #000000;
+  background-image:
+    radial-gradient(circle at 50% 25%, rgba(255, 59, 33, 0.05) 0%, transparent 45%),
+    radial-gradient(circle at 15% 80%, rgba(56, 189, 248, 0.05) 0%, transparent 45%);
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+/* Subtle, crisp orbital-station starfield & technical grid */
+.starfield-bg {
+  background-color: #000000;
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    radial-gradient(1px 1px at 40px 60px, rgba(255, 255, 255, 0.4), transparent),
+    radial-gradient(1px 1px at 190px 140px, rgba(255, 255, 255, 0.35), transparent),
+    radial-gradient(1.5px 1.5px at 310px 90px, rgba(255, 59, 33, 0.4), transparent);
+  background-size: 64px 64px, 64px 64px, 400px 300px, 400px 300px, 400px 300px;
+}
+
+.perspective-stage {
+  perspective: 1200px;
+}
+
+.preserve-3d {
+  transform-style: preserve-3d;
+}
+
+/* Zajno-inspired Orbital Station Panel (#0a0a0d with crisp 1px hairlines) */
+.holo-panel-3d {
+  background: rgba(12, 13, 18, 0.88);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  box-shadow:
+    0 24px 48px -12px rgba(0, 0, 0, 0.9),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.08);
+}
+
+/* Clean 3D Interactive Card */
+.micro-card {
+  position: relative;
+  transform-style: preserve-3d;
+  transition:
+    transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 0.2s ease,
+    background-color 0.2s ease;
+  box-shadow:
+    0 4px 16px -4px rgba(0, 0, 0, 0.65),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.06);
+}
+
+.micro-card:hover {
+  transform: perspective(1000px) translateY(-2px) translateZ(4px);
+  box-shadow:
+    0 12px 24px -8px rgba(255, 59, 33, 0.18),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.16);
+}
+
+.micro-btn {
+  position: relative;
+  transition:
+    transform 0.18s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.18s ease,
+    background-color 0.18s ease,
+    border-color 0.18s ease;
+}
+
+.micro-btn:hover {
+  transform: translateY(-1px);
+}
+
+.micro-btn:active {
+  transform: translateY(0.5px) scale(0.99);
+}
+
+@keyframes float3D {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+.animate-float-3d {
+  animation: float3D 4.5s ease-in-out infinite;
+}
+
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.25);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 59, 33, 0.6);
+}
