@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { SpeedInsights } from '@vercel/speed-insights/react';
 import { useAcademyStore, getCadetRank } from './store/useAcademyStore';
 import { AcademyTab } from './types/academy';
 import { COSMIC_FUN_FACTS_TICKER } from './data/spaceAcademyData';
@@ -243,6 +244,9 @@ export const App: React.FC = () => {
       <WalkthroughModal />
       <GlossaryModal />
       <CadetProfileModal />
+
+      {/* Vercel Speed Insights */}
+      <SpeedInsights />
     </div>
   );
 };
