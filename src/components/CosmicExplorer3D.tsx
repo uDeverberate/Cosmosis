@@ -195,41 +195,109 @@ const PLANET_DEBRIS_DATA: Record<string, PlanetaryDebrisInfo> = {
   },
 };
 
-// --- 3D Asteroid Belt Between Mars & Jupiter (Full System View) ---
+// --- Procedural Craggy, Pitted Asteroid Geometry with Fractal Noise Displacement ---
+function createCraggyAsteroidGeometry(seed: number): THREE.BufferGeometry {
+  const geo = new THREE.DodecahedronGeometry(1, 1);
+  const pos = geo.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const v = new THREE.Vector3().fromBufferAttribute(pos, i);
+    const len = v.length();
+    // Multi-frequency spherical surface deformation (harmonic crags and crater pits)
+    const n1 = Math.sin(v.x * 3.5 + seed) * Math.cos(v.y * 3.5) * Math.sin(v.z * 3.5);
+    const n2 = Math.sin(v.x * 8 + seed * 2) * Math.cos(v.z * 8) * 0.45;
+    const crater = Math.pow(Math.max(0, Math.sin(v.y * 2.5 + seed)), 3) * -0.25; // Impact depression
+    const disp = 1 + n1 * 0.24 + n2 * 0.12 + crater;
+    v.setLength(len * disp);
+    pos.setXYZ(i, v.x, v.y, v.z);
+  }
+  geo.computeVertexNormals();
+  return geo;
+}
+
+// Atmospheric Rayleigh Scattering & Greenhouse haze profiles for planets
+const ATMOSPHERE_PROFILES: Record<string, { color: string; scale: number; opacity: number }> = {
+  earth: { color: '#38bdf8', scale: 1.045, opacity: 0.38 }, // Ethereal nitrogen-oxygen blue
+  venus: { color: '#fbbf24', scale: 1.035, opacity: 0.45 }, // Thick golden sulfuric acid haze
+  mars: { color: '#f97316', scale: 1.025, opacity: 0.26 },  // Thin butterscotch iron dust fringe
+  jupiter: { color: '#fdba74', scale: 1.025, opacity: 0.22 }, // Warm ivory-peach ammonia fringe
+  saturn: { color: '#fde047', scale: 1.022, opacity: 0.2 },  // Soft golden haze
+  uranus: { color: '#22d3ee', scale: 1.035, opacity: 0.35 }, // Vibrant aquamarine methane halo
+  neptune: { color: '#3b82f6', scale: 1.035, opacity: 0.38 }, // Deep cobalt-azure methane glow
+};
+
+// --- Realistic 3D Asteroid Belt with Pitted Craggy Rocks & Chaotic Tumbling ---
 const AsteroidBelt3D: React.FC<{ timeSpeed: number }> = ({ timeSpeed }) => {
   const groupRef = useRef<THREE.Group>(null!);
+  const geometries = useMemo(
+    () => [
+      createCraggyAsteroidGeometry(1),
+      createCraggyAsteroidGeometry(3),
+      createCraggyAsteroidGeometry(7),
+      createCraggyAsteroidGeometry(12),
+      createCraggyAsteroidGeometry(19),
+    ],
+    []
+  );
+
   const asteroids = useMemo(() => {
-    return Array.from({ length: 140 }).map((_, i) => {
-      const angle = (i / 140) * Math.PI * 2 + Math.random() * 0.2;
-      const radius = 9.9 + (Math.random() - 0.5) * 0.85;
-      const y = (Math.random() - 0.5) * 0.35;
-      const size = 0.04 + Math.random() * 0.055;
+    return Array.from({ length: 160 }).map((_, i) => {
+      const angle = (i / 160) * Math.PI * 2 + (Math.random() - 0.5) * 0.25;
+      const radius = 9.85 + (Math.random() - 0.5) * 0.95;
+      const y = (Math.random() - 0.5) * 0.45;
+      const size = 0.035 + Math.random() * 0.055;
+      const geoIndex = i % geometries.length;
+      // Tumbling physics rotation speeds
+      const rotSpeed = [
+        (Math.random() - 0.5) * 0.8,
+        (Math.random() - 0.5) * 0.8,
+        (Math.random() - 0.5) * 0.8,
+      ] as [number, number, number];
+      // Carbonaceous & silicate rock tone variations
+      const colors = ['#64748b', '#475569', '#334155', '#52525b', '#71717a'];
+      const color = colors[i % colors.length];
+
       return {
         pos: [Math.cos(angle) * radius, y, Math.sin(angle) * radius] as [number, number, number],
         size,
+        geoIndex,
+        rotSpeed,
+        color,
       };
     });
-  }, []);
+  }, [geometries]);
 
   useFrame((_, delta) => {
     if (groupRef.current) {
       groupRef.current.rotation.y += delta * 0.08 * timeSpeed;
+      // Animate individual tumbling asteroids
+      groupRef.current.children.forEach((child, idx) => {
+        const ast = asteroids[idx];
+        if (ast) {
+          child.rotation.x += delta * ast.rotSpeed[0] * timeSpeed;
+          child.rotation.y += delta * ast.rotSpeed[1] * timeSpeed;
+          child.rotation.z += delta * ast.rotSpeed[2] * timeSpeed;
+        }
+      });
     }
   });
 
   return (
     <group ref={groupRef}>
       {asteroids.map((ast, idx) => (
-        <mesh key={idx} position={ast.pos}>
-          <dodecahedronGeometry args={[ast.size, 0]} />
-          <meshStandardMaterial color="#94a3b8" roughness={0.85} metalness={0.2} />
+        <mesh
+          key={idx}
+          position={ast.pos}
+          geometry={geometries[ast.geoIndex]}
+          scale={[ast.size, ast.size, ast.size]}
+        >
+          <meshStandardMaterial color={ast.color} roughness={0.92} metalness={0.18} />
         </mesh>
       ))}
     </group>
   );
 };
 
-// --- 3D Close-Up Orbital Debris Swarm, Meteor Streaks & Tracer Rings (Zajno Style!) ---
+// --- Realistic Orbital Debris, Incandescent Bolides & Tracers (Zajno Style!) ---
 const PlanetCloseUpDebrisAndMeteors: React.FC<{
   planet: PlanetData;
   showDebris: boolean;
@@ -240,7 +308,6 @@ const PlanetCloseUpDebrisAndMeteors: React.FC<{
   const meteorGroupRef = useRef<THREE.Group>(null!);
   const tracerGroupRef = useRef<THREE.Group>(null!);
 
-  // Generate planet-scaled debris count (Earth gets dense LEO/MEO swarm; others get probes + rocky fragments)
   const debrisCount = planet.id === 'earth' ? 160 : planet.id === 'mars' || planet.id === 'saturn' ? 85 : 55;
 
   const debrisItems = useMemo(() => {
@@ -257,7 +324,6 @@ const PlanetCloseUpDebrisAndMeteors: React.FC<{
     });
   }, [debrisCount, planet.id]);
 
-  // Tilted orbital tracer circles (Zajno's minimalist red & white orbital station trajectory lines)
   const tracerOrbits = useMemo(() => {
     const inclinations =
       planet.id === 'earth'
@@ -283,7 +349,7 @@ const PlanetCloseUpDebrisAndMeteors: React.FC<{
     });
   }, [planet.id]);
 
-  // High-velocity animated meteoroid / bolide streaks
+  // High-velocity incandescent bolides
   const meteors = useMemo(() => {
     return Array.from({ length: 7 }).map((_, i) => ({
       offset: i * 1.4,
@@ -307,7 +373,7 @@ const PlanetCloseUpDebrisAndMeteors: React.FC<{
       meteorGroupRef.current.children.forEach((child, idx) => {
         const m = meteors[idx];
         if (!m) return;
-        const progress = ((t * m.speed + m.offset) % 6) - 3; // -3 to +3
+        const progress = ((t * m.speed + m.offset) % 6) - 3;
         child.position.set(progress * 1.4, m.yStart - progress * m.incline, m.zPlane);
       });
     }
@@ -332,32 +398,70 @@ const PlanetCloseUpDebrisAndMeteors: React.FC<{
         </group>
       )}
 
-      {/* 2. 3D SPACE DEBRIS & SATELLITE FRAGMENT CLOUD */}
+      {/* 2. 3D SPACE DEBRIS: SATELLITE SOLAR SHARDS, ROCKET CASINGS & SHRAPNEL */}
       {showDebris && (
         <group ref={debrisGroupRef}>
           {debrisItems.map((d, i) => (
-            <mesh key={i} position={d.pos}>
-              <octahedronGeometry args={[d.size, 0]} />
-              <meshBasicMaterial color={d.isRedHazard ? '#ff3b21' : '#e2e8f0'} />
-            </mesh>
+            <group key={i} position={d.pos}>
+              {i % 4 === 0 ? (
+                // Solar array shard (blue-gold reflective panel)
+                <mesh rotation={[i * 0.5, i * 0.3, i * 0.2]}>
+                  <boxGeometry args={[d.size * 2.2, d.size * 1.1, d.size * 0.15]} />
+                  <meshStandardMaterial
+                    color="#1e3a8a"
+                    metalness={0.88}
+                    roughness={0.2}
+                    emissive="#1d4ed8"
+                    emissiveIntensity={0.25}
+                  />
+                </mesh>
+              ) : i % 4 === 1 ? (
+                // Spent rocket stage cylinder
+                <mesh rotation={[i * 0.2, 0, i * 0.6]}>
+                  <cylinderGeometry args={[d.size * 0.5, d.size * 0.5, d.size * 2, 8]} />
+                  <meshStandardMaterial color="#cbd5e1" metalness={0.7} roughness={0.3} />
+                </mesh>
+              ) : (
+                // Shrapnel fragment with pulsing hazard beacon
+                <mesh>
+                  <octahedronGeometry args={[d.size, 0]} />
+                  <meshStandardMaterial
+                    color={d.isRedHazard ? '#ff3b21' : '#94a3b8'}
+                    emissive={d.isRedHazard ? '#ff3b21' : '#000000'}
+                    emissiveIntensity={d.isRedHazard ? 0.85 : 0}
+                    roughness={0.4}
+                  />
+                </mesh>
+              )}
+            </group>
           ))}
         </group>
       )}
 
-      {/* 3. HIGH-VELOCITY METEOROID & BOLIDE STREAKS */}
+      {/* 3. HIGH-VELOCITY INCANDESCENT BOLIDE FIREBALLS */}
       {showMeteors && (
         <group ref={meteorGroupRef}>
           {meteors.map((_, idx) => (
             <group key={idx} rotation={[0, 0, -0.15]}>
-              {/* Glowing Meteor Head */}
-              <mesh position={[0.35, 0, 0]}>
-                <dodecahedronGeometry args={[0.045, 0]} />
-                <meshBasicMaterial color="#fef08a" />
+              {/* White-Hot Incandescent Core */}
+              <mesh position={[0.42, 0, 0]}>
+                <sphereGeometry args={[0.045, 16, 16]} />
+                <meshBasicMaterial color="#ffffff" />
               </mesh>
-              {/* Glowing Plasma Streak Tail */}
-              <mesh position={[0, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
-                <cylinderGeometry args={[0.002, 0.028, 0.75, 8]} />
-                <meshBasicMaterial color="#ff3b21" transparent opacity={0.75} />
+              {/* Surrounding Ionization Plasma Aura */}
+              <mesh position={[0.42, 0, 0]}>
+                <sphereGeometry args={[0.075, 16, 16]} />
+                <meshBasicMaterial color="#fef08a" transparent opacity={0.65} />
+              </mesh>
+              {/* Glowing Aerodynamic Plasma Shockwave Cone */}
+              <mesh position={[0.05, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
+                <coneGeometry args={[0.055, 0.85, 12]} />
+                <meshBasicMaterial color="#ff3b21" transparent opacity={0.75} side={THREE.DoubleSide} />
+              </mesh>
+              {/* Secondary Outer Thermal Wake */}
+              <mesh position={[-0.15, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
+                <coneGeometry args={[0.085, 1.25, 8]} />
+                <meshBasicMaterial color="#ea580c" transparent opacity={0.35} side={THREE.DoubleSide} />
               </mesh>
             </group>
           ))}
@@ -367,7 +471,7 @@ const PlanetCloseUpDebrisAndMeteors: React.FC<{
   );
 };
 
-// --- Realistic Textured 3D Planet Sphere ---
+// --- Photorealistic Textured 3D Planet Sphere with PBR Specular & Rayleigh Atmosphere ---
 interface TexturedPlanetSphereProps {
   planet: PlanetData;
   radius: number;
@@ -384,6 +488,8 @@ const TexturedPlanetSphere: React.FC<TexturedPlanetSphereProps> = ({
   const meshRef = useRef<THREE.Mesh>(null!);
   const cloudsRef = useRef<THREE.Mesh>(null!);
   const coronaRef = useRef<THREE.Mesh>(null!);
+  const coronaOuterRef = useRef<THREE.Mesh>(null!);
+  const prominencesRef = useRef<THREE.Group>(null!);
   const moonGroupRef = useRef<THREE.Group>(null!);
 
   const textures = useMemo(() => getPlanetTextures(planet.id), [planet.id]);
@@ -391,6 +497,7 @@ const TexturedPlanetSphere: React.FC<TexturedPlanetSphereProps> = ({
     () => (planet.id === 'earth' ? getPlanetTextures('moon') : null),
     [planet.id]
   );
+  const atmosphere = ATMOSPHERE_PROFILES[planet.id];
 
   useFrame((state, delta) => {
     if (meshRef.current) {
@@ -403,6 +510,14 @@ const TexturedPlanetSphere: React.FC<TexturedPlanetSphereProps> = ({
       const pulse = 1 + Math.sin(state.clock.elapsedTime * 2.5) * 0.035;
       coronaRef.current.scale.set(pulse, pulse, pulse);
     }
+    if (coronaOuterRef.current) {
+      const outerPulse = 1 + Math.cos(state.clock.elapsedTime * 1.8) * 0.055;
+      coronaOuterRef.current.scale.set(outerPulse, outerPulse, outerPulse);
+    }
+    if (prominencesRef.current) {
+      prominencesRef.current.rotation.y += delta * 0.35;
+      prominencesRef.current.rotation.z = Math.sin(state.clock.elapsedTime * 0.8) * 0.15;
+    }
     if (moonGroupRef.current) {
       moonGroupRef.current.rotation.y += delta * 0.65;
     }
@@ -410,6 +525,7 @@ const TexturedPlanetSphere: React.FC<TexturedPlanetSphereProps> = ({
 
   return (
     <group>
+      {/* Main Celestial Body Surface Mesh */}
       <mesh
         ref={meshRef}
         rotation={[
@@ -431,51 +547,87 @@ const TexturedPlanetSphere: React.FC<TexturedPlanetSphereProps> = ({
           <meshStandardMaterial
             map={textures.map}
             bumpMap={textures.bumpMap}
-            bumpScale={textures.bumpMap ? 0.045 : 0}
-            roughness={planet.id === 'earth' ? 0.55 : 0.75}
-            metalness={0.08}
+            bumpScale={textures.bumpMap ? (planet.id === 'earth' ? 0.055 : planet.id === 'mars' ? 0.065 : 0.035) : 0}
+            roughnessMap={planet.id === 'earth' ? textures.specularMap : undefined}
+            roughness={planet.id === 'earth' ? 0.65 : 0.78}
+            metalness={planet.id === 'earth' ? 0.12 : 0.08}
             emissive={isSelected ? planet.color : '#000000'}
-            emissiveIntensity={isSelected ? 0.14 : 0}
+            emissiveIntensity={isSelected ? 0.15 : 0}
           />
         )}
       </mesh>
 
+      {/* Earth's Swirling Atmospheric Cloud Layer */}
       {planet.id === 'earth' && textures.cloudsMap && (
-        <>
-          <mesh ref={cloudsRef}>
-            <sphereGeometry args={[radius * 1.02, 48, 48]} />
-            <meshStandardMaterial
-              map={textures.cloudsMap}
-              transparent
-              opacity={0.85}
-              depthWrite={false}
-            />
-          </mesh>
-          <mesh>
-            <sphereGeometry args={[radius * 1.055, 32, 32]} />
-            <meshBasicMaterial
-              color="#38bdf8"
-              transparent
-              opacity={0.14}
-              side={THREE.BackSide}
-            />
-          </mesh>
-        </>
+        <mesh ref={cloudsRef}>
+          <sphereGeometry args={[radius * 1.025, 48, 48]} />
+          <meshStandardMaterial
+            map={textures.cloudsMap}
+            transparent
+            opacity={0.88}
+            depthWrite={false}
+          />
+        </mesh>
       )}
 
+      {/* Atmospheric Rayleigh Scattering & Limb Glow for Atmospheric Planets */}
+      {atmosphere && (
+        <mesh>
+          <sphereGeometry args={[radius * atmosphere.scale, 48, 48]} />
+          <meshBasicMaterial
+            color={atmosphere.color}
+            transparent
+            opacity={atmosphere.opacity}
+            side={THREE.BackSide}
+            blending={THREE.AdditiveBlending}
+          />
+        </mesh>
+      )}
+
+      {/* The Sun: Multi-Stage Corona, Inner Chromosphere & Magnetic Solar Prominences */}
       {planet.id === 'sun' && (
         <>
+          {/* Inner Chromosphere Glow */}
           <mesh ref={coronaRef}>
-            <sphereGeometry args={[radius * 1.14, 32, 32]} />
-            <meshBasicMaterial color="#fbbf24" transparent opacity={0.28} />
+            <sphereGeometry args={[radius * 1.06, 48, 48]} />
+            <meshBasicMaterial
+              color="#fef08a"
+              transparent
+              opacity={0.38}
+              side={THREE.BackSide}
+              blending={THREE.AdditiveBlending}
+            />
           </mesh>
-          <mesh>
-            <sphereGeometry args={[radius * 1.28, 32, 32]} />
-            <meshBasicMaterial color="#f59e0b" transparent opacity={0.12} />
+          {/* Outer Coronal Plasma Halo */}
+          <mesh ref={coronaOuterRef}>
+            <sphereGeometry args={[radius * 1.25, 48, 48]} />
+            <meshBasicMaterial
+              color="#f59e0b"
+              transparent
+              opacity={0.24}
+              side={THREE.BackSide}
+              blending={THREE.AdditiveBlending}
+            />
           </mesh>
+          {/* Magnetic Solar Prominence Loops */}
+          <group ref={prominencesRef}>
+            <mesh position={[radius * 0.95, radius * 0.25, 0]} rotation={[0, 0, 0.4]}>
+              <torusGeometry args={[radius * 0.18, 0.022, 12, 32, Math.PI]} />
+              <meshBasicMaterial color="#ffedd5" transparent opacity={0.85} />
+            </mesh>
+            <mesh position={[-radius * 0.9, -radius * 0.35, 0]} rotation={[0, 0, -1.8]}>
+              <torusGeometry args={[radius * 0.22, 0.024, 12, 32, Math.PI]} />
+              <meshBasicMaterial color="#f97316" transparent opacity={0.8} />
+            </mesh>
+            <mesh position={[0, radius * 0.92, -radius * 0.2]} rotation={[1.2, 0, 0]}>
+              <torusGeometry args={[radius * 0.15, 0.02, 12, 32, Math.PI]} />
+              <meshBasicMaterial color="#ef4444" transparent opacity={0.75} />
+            </mesh>
+          </group>
         </>
       )}
 
+      {/* Saturn & Uranus Rings with Cassini Division */}
       {planet.hasRings && (
         <group rotation={[planet.id === 'uranus' ? 1.45 : 1.15, 0.2, 0]}>
           {planet.id === 'saturn' && textures.ringMap ? (
@@ -485,7 +637,7 @@ const TexturedPlanetSphere: React.FC<TexturedPlanetSphereProps> = ({
                 map={textures.ringMap}
                 side={THREE.DoubleSide}
                 transparent
-                roughness={0.6}
+                roughness={0.55}
                 depthWrite={false}
               />
             </mesh>
@@ -502,6 +654,7 @@ const TexturedPlanetSphere: React.FC<TexturedPlanetSphereProps> = ({
         </group>
       )}
 
+      {/* Earth's Cratered Moon */}
       {planet.id === 'earth' && moonTextures && (
         <group ref={moonGroupRef}>
           <mesh position={[radius * 2.1, radius * 0.25, 0]}>
