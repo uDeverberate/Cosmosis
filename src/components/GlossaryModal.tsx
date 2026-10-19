@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { SPACE_GLOSSARY } from '../data/spaceAcademyData';
 import { useAcademyStore } from '../store/useAcademyStore';
+import { Modal } from './Modal';
 import { BookOpen, Search, X, Sparkles, Volume2, Info } from 'lucide-react';
 import { soundFX } from '../utils/soundEffects';
 
@@ -8,8 +9,6 @@ export const GlossaryModal: React.FC = () => {
   const { isGlossaryOpen, setGlossaryOpen } = useAcademyStore();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
-
-  if (!isGlossaryOpen) return null;
 
   const categories = ['All', 'Orbits & Physics', 'Rockets & Tech', 'Planets & Moons', 'Stars & Galaxies'];
 
@@ -34,8 +33,12 @@ export const GlossaryModal: React.FC = () => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
-      <div className="w-full max-w-5xl max-h-[86vh] bg-space-900 border border-cyan-500/40 rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+    <Modal
+      open={isGlossaryOpen}
+      onClose={() => setGlossaryOpen(false)}
+      labelledBy="glossary-title"
+      className="w-full max-w-5xl bg-space-900 border border-cyan-500/40 rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+    >
         {/* Header */}
         <div className="px-6 py-4 bg-space-950/90 border-b border-slate-800 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -43,8 +46,8 @@ export const GlossaryModal: React.FC = () => {
               <BookOpen className="h-5 w-5" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-white">
-                COSMOSIS Encyclopedia & Glossary ({SPACE_GLOSSARY.length} Essential Space Terms)
+              <h2 id="glossary-title" className="text-base font-bold text-white">
+                COSMOSIS Encyclopedia & Glossary ({SPACE_GLOSSARY.length} essential space terms)
               </h2>
               <p className="text-xs text-slate-400">
                 Astrophysics and rocketry decoded into plain English, everyday analogies, and fun facts
@@ -54,6 +57,7 @@ export const GlossaryModal: React.FC = () => {
           <button
             onClick={() => setGlossaryOpen(false)}
             className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+            aria-label="Close glossary"
           >
             <X className="h-5 w-5" />
           </button>
@@ -93,7 +97,24 @@ export const GlossaryModal: React.FC = () => {
         </div>
 
         {/* Glossary Cards Grid */}
+        <p className="sr-only" aria-live="polite">
+          {filteredTerms.length} {filteredTerms.length === 1 ? 'term' : 'terms'} shown
+        </p>
         <div className="p-6 overflow-y-auto grid grid-cols-1 md:grid-cols-2 gap-4">
+          {filteredTerms.length === 0 && (
+            <div className="md:col-span-2 rounded-xl border border-slate-800 bg-space-950/80 p-8 text-center space-y-2">
+              <p className="text-sm text-slate-200">No terms match “{searchQuery}”.</p>
+              <button
+                onClick={() => {
+                  setSearchQuery('');
+                  setSelectedCategory('All');
+                }}
+                className="text-xs font-mono uppercase text-cyan-400 hover:text-cyan-300 underline underline-offset-2"
+              >
+                Clear filters
+              </button>
+            </div>
+          )}
           {filteredTerms.map((item) => (
             <div
               key={item.term}
@@ -146,7 +167,6 @@ export const GlossaryModal: React.FC = () => {
             </div>
           ))}
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 };

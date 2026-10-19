@@ -28,6 +28,8 @@ export const TiltCard3D: React.FC<TiltCard3DProps> = ({
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     const el = cardRef.current;
     if (!el) return;
+    // Decorative motion only: skip tilt when the visitor asked for reduced motion
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
     const rect = el.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
@@ -61,6 +63,18 @@ export const TiltCard3D: React.FC<TiltCard3DProps> = ({
       onClick={onClick}
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
+      role={onClick ? 'button' : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={
+        onClick
+          ? (event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                onClick();
+              }
+            }
+          : undefined
+      }
       style={{
         transform: transformStyle,
         transition:

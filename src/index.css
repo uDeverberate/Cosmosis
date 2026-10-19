@@ -6,9 +6,43 @@
   color-scheme: dark;
 }
 
+/* Keyboard focus stays visible; pointer clicks stay quiet */
+:focus-visible {
+  outline: 2px solid #38bdf8;
+  outline-offset: 2px;
+}
+
+button:focus:not(:focus-visible),
+a:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Respect vestibular preferences for every CSS-driven motion in the app */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Animated starfield/tilt layers are decorative: hide them when motion is reduced */
+@media (prefers-reduced-motion: reduce) {
+  .animate-float-3d,
+  .animate-float-slow,
+  .animate-pulse-glow,
+  .pulse-live {
+    animation: none !important;
+  }
+}
+
 body {
   margin: 0;
   min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
   background-color: #000000;
   background-image:
     radial-gradient(circle at 50% 25%, rgba(255, 59, 33, 0.05) 0%, transparent 45%),

@@ -125,7 +125,7 @@ function ZeroGBoundaryWalls({ size = 8 }: { size?: number }) {
 
 export const SpaceGamesArcade: React.FC = () => {
   const [activeGame, setActiveGame] = useState<GameMode>('lunar-lander');
-  const { addXp, unlockBadge } = useAcademyStore();
+  const { addXp, unlockBadge, recordTriviaCorrect } = useAcademyStore();
 
   // ==========================================================================
   // GAME 1: MULTI-SITE EAGLE LUNAR TOUCHDOWN SIMULATOR (+ COLLECTIBLE PODS)
@@ -655,6 +655,7 @@ export const SpaceGamesArcade: React.FC = () => {
   const [triviaPicked, setTriviaPicked] = useState<number | null>(null);
   const [triviaStreak, setTriviaStreak] = useState<number>(0);
   const [triviaScore, setTriviaScore] = useState<number>(0);
+  const [lastTriviaReward, setLastTriviaReward] = useState<number>(0);
 
   const currentTrivia = TRIVIA_GAUNTLET_QUESTIONS[triviaIndex] || TRIVIA_GAUNTLET_QUESTIONS[0];
 
@@ -1182,7 +1183,12 @@ export const SpaceGamesArcade: React.FC = () => {
                       setTriviaStreak(nextStreak);
                       setTriviaScore((s) => s + 1);
                       const reward = (currentTrivia.xpReward || 40) + nextStreak * 5;
-                      addXp(reward, `Trivia Gauntlet Streak x${nextStreak}!`);
+                      const isNew = recordTriviaCorrect(
+                        `trivia-${triviaIndex}`,
+                        reward,
+                        `Trivia Gauntlet streak x${nextStreak}`
+                      );
+                      setLastTriviaReward(isNew ? reward : 0);
                     } else {
                       soundFX.playAlert();
                       setTriviaStreak(0);
@@ -1214,7 +1220,9 @@ export const SpaceGamesArcade: React.FC = () => {
               <div className="p-4 rounded-xl bg-cyan-950/35 border border-cyan-500/35 text-xs text-cyan-100 leading-relaxed">
                 <div className="font-mono font-bold text-emerald-300 mb-1">
                   {triviaPicked === currentTrivia.correctIndex
-                    ? `✅ Correct! +${(currentTrivia.xpReward || 40) + triviaStreak * 5} Space XP Earned!`
+                    ? lastTriviaReward > 0
+                      ? `✅ Correct! +${lastTriviaReward} Space XP earned!`
+                      : '✅ Correct! (question already counted)'
                     : '💡 Not quite! Here is the science explanation:'}
                 </div>
                 {currentTrivia.explanation}

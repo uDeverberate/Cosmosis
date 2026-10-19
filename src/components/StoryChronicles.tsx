@@ -209,9 +209,10 @@ export const StoryChronicles: React.FC = () => {
   const [activeStory, setActiveStory] = useState<SpaceStory>(SPACE_STORIES[0]);
   const [chapterIndex, setChapterIndex] = useState<number>(0);
   const [selectedChoice, setSelectedChoice] = useState<StoryChoice | null>(null);
+  const [awardedXp, setAwardedXp] = useState<number>(0);
   const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
 
-  const { completedStories, markStoryCompleted, addXp } = useAcademyStore();
+  const { completedStories, markStoryCompleted, recordChoice } = useAcademyStore();
 
   const currentChapter = activeStory.chapters[chapterIndex] || activeStory.chapters[0];
   const isLastChapter = chapterIndex === activeStory.chapters.length - 1;
@@ -224,6 +225,7 @@ export const StoryChronicles: React.FC = () => {
     setActiveStory(story);
     setChapterIndex(0);
     setSelectedChoice(null);
+    setAwardedXp(0);
   };
 
   const handleChooseOption = (choice: StoryChoice) => {
@@ -234,7 +236,12 @@ export const StoryChronicles: React.FC = () => {
     } else {
       soundFX.playScanPing();
     }
-    addXp(choice.xpBonus, `Story Decision: ${activeStory.title}`);
+    // A best call earns full credit; a learning call still earns a little for trying.
+    // Each chapter only pays out once, so restarting a story can't farm XP.
+    const choiceKey = `${activeStory.id}-${currentChapter.id}`;
+    const reward = choice.isOptimal ? choice.xpBonus : 5;
+    const isNew = recordChoice(choiceKey, reward, `Story decision: ${activeStory.title}`);
+    setAwardedXp(isNew ? reward : 0);
   };
 
   const handleNextChapter = () => {
@@ -247,6 +254,7 @@ export const StoryChronicles: React.FC = () => {
     } else {
       setChapterIndex((prev) => prev + 1);
       setSelectedChoice(null);
+      setAwardedXp(0);
     }
   };
 
@@ -382,9 +390,11 @@ export const StoryChronicles: React.FC = () => {
                 onClick={() => {
                   setChapterIndex(0);
                   setSelectedChoice(null);
+                  setAwardedXp(0);
                 }}
                 className="p-1.5 rounded-full bg-space-900/90 hover:bg-space-800 border border-slate-700 text-slate-300 hover:text-white"
-                title="Restart Story"
+                title="Restart story"
+                aria-label="Restart story"
               >
                 <RotateCcw className="h-3.5 w-3.5" />
               </button>
@@ -395,7 +405,7 @@ export const StoryChronicles: React.FC = () => {
           <div className="grid grid-cols-3 bg-space-950/90 border-b border-slate-800/80 divide-x divide-slate-800/80 font-mono">
             {currentChapter.telemetryMetrics.map((m, idx) => (
               <div key={idx} className="px-4 py-2.5">
-                <div className="text-[9px] text-slate-400 uppercase">{m.label}</div>
+                <div className="text-[10px] text-slate-400 uppercase">{m.label}</div>
                 <div
                   className={`text-xs font-bold mt-0.5 truncate ${
                     m.status === 'crit'
@@ -431,7 +441,10 @@ export const StoryChronicles: React.FC = () => {
                     onClick={() => {
                       setChapterIndex(idx);
                       setSelectedChoice(null);
+                      setAwardedXp(0);
                     }}
+                    aria-label={`Go to chapter ${idx + 1}`}
+                    aria-current={idx === chapterIndex ? 'step' : undefined}
                     className={`h-2.5 rounded-full transition-all ${
                       idx === chapterIndex
                         ? 'w-8 bg-cyan-400'
@@ -520,7 +533,7 @@ export const StoryChronicles: React.FC = () => {
                       <span>{choice.label}</span>
                       {selectedChoice && isPicked && (
                         <span className="text-[10px] font-mono text-cyan-300 font-bold shrink-0">
-                          +{choice.xpBonus} XP Earned!
+                          {awardedXp > 0 ? `+${awardedXp} XP earned` : 'Decision already logged'}
                         </span>
                       )}
                     </button>
@@ -532,7 +545,9 @@ export const StoryChronicles: React.FC = () => {
                 <div className="pt-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-t border-slate-800/80 animate-in fade-in duration-200">
                   <div className="space-y-1">
                     <div className="text-[11px] font-mono font-bold text-emerald-400">
-                      +{selectedChoice.xpBonus} Space XP Awarded!
+                      {awardedXp > 0
+                        ? `+${awardedXp} Space XP awarded${selectedChoice.isOptimal ? ' — best call' : ''}!`
+                        : 'Already completed — no repeat XP'}
                     </div>
                     <p className="text-xs text-slate-200 leading-relaxed">
                       {selectedChoice.outcomeText}

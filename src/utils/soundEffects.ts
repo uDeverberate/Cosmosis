@@ -7,6 +7,15 @@ class SoundEffectsManager {
   private isMuted: boolean = false;
   private thrusterOsc: OscillatorNode | null = null;
   private thrusterGain: GainNode | null = null;
+  private lastClickAt = 0;
+
+  constructor() {
+    try {
+      this.isMuted = window.localStorage.getItem('cosmosis:muted') === 'true';
+    } catch {
+      this.isMuted = false;
+    }
+  }
 
   private async ensureContext(): Promise<boolean> {
     if (this.isMuted) return false;
@@ -30,6 +39,10 @@ class SoundEffectsManager {
   }
 
   public async playClick(): Promise<void> {
+    // Collapse duplicate click sounds when a call site and a store action both fire
+    const nowMs = performance.now();
+    if (nowMs - this.lastClickAt < 70) return;
+    this.lastClickAt = nowMs;
     haptics.light();
     if (!(await this.ensureContext()) || !this.ctx || !this.masterGain) return;
     const now = this.ctx.currentTime;
@@ -167,6 +180,11 @@ class SoundEffectsManager {
 
   public toggleMute(): boolean {
     this.isMuted = !this.isMuted;
+    try {
+      window.localStorage.setItem('cosmosis:muted', String(this.isMuted));
+    } catch {
+      // Storage may be unavailable (private mode); mute still applies for the session
+    }
     if (this.isMuted) {
       this.stopThrusterSound();
     }

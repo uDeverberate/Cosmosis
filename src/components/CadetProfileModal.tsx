@@ -1,6 +1,7 @@
 import React, { useRef } from 'react';
 import { useAcademyStore, getCadetRank, CADET_RANKS } from '../store/useAcademyStore';
 import { ACADEMY_BADGES } from '../data/spaceAcademyData';
+import { Modal } from './Modal';
 import { Award, Download, X, CheckCircle2, Lock, Sparkles } from 'lucide-react';
 import { soundFX, triggerCelebrationConfetti } from '../utils/soundEffects';
 
@@ -16,11 +17,10 @@ export const CadetProfileModal: React.FC = () => {
     scannedHotspots,
     completedStories,
     completedGuides,
+    resetProgress,
   } = useAcademyStore();
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
-
-  if (!isProfileModalOpen) return null;
 
   const currentRank = getCadetRank(xp);
 
@@ -125,8 +125,12 @@ export const CadetProfileModal: React.FC = () => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
-      <div className="w-full max-w-4xl max-h-[88vh] bg-space-900 border border-cyan-500/40 rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+    <Modal
+      open={isProfileModalOpen}
+      onClose={() => setProfileModalOpen(false)}
+      labelledBy="profile-title"
+      className="w-full max-w-4xl bg-space-900 border border-cyan-500/40 rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+    >
         <canvas ref={canvasRef} width={900} height={640} className="hidden" />
 
         {/* Header */}
@@ -136,7 +140,7 @@ export const CadetProfileModal: React.FC = () => {
               {currentRank.icon}
             </div>
             <div>
-              <h2 className="text-base font-bold text-white">
+              <h2 id="profile-title" className="text-base font-bold text-white">
                 COSMOSIS Service Record & Mission Badges
               </h2>
               <p className="text-xs text-slate-400 font-mono">
@@ -147,6 +151,7 @@ export const CadetProfileModal: React.FC = () => {
           <button
             onClick={() => setProfileModalOpen(false)}
             className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
+            aria-label="Close service record"
           >
             <X className="h-5 w-5" />
           </button>
@@ -174,7 +179,7 @@ export const CadetProfileModal: React.FC = () => {
                     >
                       <div className="text-xl mb-1">{r.icon}</div>
                       <div className="text-[10px] font-bold leading-tight">{r.title}</div>
-                      <div className="text-[9px] font-mono text-cyan-400 mt-1">{r.minXp} XP</div>
+                      <div className="text-[10px] font-mono text-cyan-400 mt-1">{r.minXp} XP</div>
                     </div>
                   );
                 })}
@@ -275,8 +280,23 @@ export const CadetProfileModal: React.FC = () => {
               })}
             </div>
           </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-800/80">
+            <span className="text-[11px] text-slate-400">
+              Progress saves automatically on this device.
+            </span>
+            <button
+              onClick={() => {
+                if (window.confirm('Reset all XP, badges and mission progress on this device?')) {
+                  resetProgress();
+                }
+              }}
+              className="text-[11px] font-mono uppercase text-slate-400 hover:text-rose-300 underline underline-offset-2"
+            >
+              Reset progress
+            </button>
+          </div>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 };

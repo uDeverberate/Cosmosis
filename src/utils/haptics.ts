@@ -4,6 +4,19 @@
  */
 class HapticEngine {
   private enabled: boolean = true;
+  // Browsers block vibration until the visitor has interacted with the page
+  private hasInteracted: boolean = false;
+
+  constructor() {
+    if (typeof window === 'undefined') return;
+    const activate = () => {
+      this.hasInteracted = true;
+      window.removeEventListener('pointerdown', activate, true);
+      window.removeEventListener('keydown', activate, true);
+    };
+    window.addEventListener('pointerdown', activate, true);
+    window.addEventListener('keydown', activate, true);
+  }
 
   public setEnabled(val: boolean) {
     this.enabled = val;
@@ -15,7 +28,7 @@ class HapticEngine {
 
   // Light crisp tick (button tap, chip selection, bottom dock change)
   public light() {
-    if (!this.enabled || !this.isSupported()) return;
+    if (!this.hasInteracted || !this.enabled || !this.isSupported()) return;
     try {
       navigator.vibrate(12);
     } catch {
@@ -25,7 +38,7 @@ class HapticEngine {
 
   // Subtle selection tick (scrubbing, carousel snapping)
   public selection() {
-    if (!this.enabled || !this.isSupported()) return;
+    if (!this.hasInteracted || !this.enabled || !this.isSupported()) return;
     try {
       navigator.vibrate(8);
     } catch {
@@ -35,7 +48,7 @@ class HapticEngine {
 
   // Medium solid pulse (view mode transition, drawer sheet toggle, warp speed)
   public medium() {
-    if (!this.enabled || !this.isSupported()) return;
+    if (!this.hasInteracted || !this.enabled || !this.isSupported()) return;
     try {
       navigator.vibrate(24);
     } catch {
@@ -45,7 +58,7 @@ class HapticEngine {
 
   // Heavy pulse (scanning hotspot lock, landing, impact)
   public heavy() {
-    if (!this.enabled || !this.isSupported()) return;
+    if (!this.hasInteracted || !this.enabled || !this.isSupported()) return;
     try {
       navigator.vibrate(45);
     } catch {
@@ -55,7 +68,7 @@ class HapticEngine {
 
   // Double-tap pulse for quiz success or badge reward
   public success() {
-    if (!this.enabled || !this.isSupported()) return;
+    if (!this.hasInteracted || !this.enabled || !this.isSupported()) return;
     try {
       navigator.vibrate([18, 40, 24]);
     } catch {
@@ -65,7 +78,7 @@ class HapticEngine {
 
   // Error pattern (wrong answer, collision risk)
   public error() {
-    if (!this.enabled || !this.isSupported()) return;
+    if (!this.hasInteracted || !this.enabled || !this.isSupported()) return;
     try {
       navigator.vibrate([40, 30, 40, 30, 50]);
     } catch {
@@ -75,7 +88,7 @@ class HapticEngine {
 
   // Warp acceleration sequence (cinematic tactile ramp)
   public warp() {
-    if (!this.enabled || !this.isSupported()) return;
+    if (!this.hasInteracted || !this.enabled || !this.isSupported()) return;
     try {
       navigator.vibrate([10, 25, 18, 20, 35]);
     } catch {

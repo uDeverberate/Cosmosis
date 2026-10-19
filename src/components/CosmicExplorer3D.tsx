@@ -372,7 +372,10 @@ const AtmosphereFresnelHalo: React.FC<{
 
 
 // --- Realistic 3D Asteroid Belt with Pitted Craggy Rocks & Chaotic Tumbling ---
-const AsteroidBelt3D: React.FC<{ timeSpeed: number }> = ({ timeSpeed }) => {
+const AsteroidBelt3D: React.FC<{
+  timeSpeed: number;
+  onSelectAsteroidBelt?: () => void;
+}> = ({ timeSpeed, onSelectAsteroidBelt }) => {
   const groupRef = useRef<THREE.Group>(null!);
   const rockTextures = useMemo(() => getAsteroidRockTextures(), []);
   const geometries = useMemo(
@@ -434,7 +437,18 @@ const AsteroidBelt3D: React.FC<{ timeSpeed: number }> = ({ timeSpeed }) => {
   });
 
   return (
-    <group ref={groupRef}>
+    <group
+      ref={groupRef}
+      onPointerDown={() => {
+        lastPlanetPointerDownAt = Date.now();
+      }}
+      onClick={(e) => {
+        if (onSelectAsteroidBelt) {
+          e.stopPropagation();
+          onSelectAsteroidBelt();
+        }
+      }}
+    >
       {asteroids.map((ast, idx) => (
         <mesh
           key={idx}
@@ -1154,12 +1168,97 @@ const PlanetGLBModel: React.FC<PlanetGLBProps> = (props) => {
   );
 };
 
+// --- Live world positions so the story camera can fly to a moving planet ---
+const PLANET_WORLD_POSITIONS = new Map<string, THREE.Vector3>();
+const PLANET_RADII = new Map<string, number>();
+let lastPlanetPointerDownAt = 0;
+
+const easeInOutCubic = (value: number): number =>
+  value < 0.5 ? 4 * value * value * value : 1 - Math.pow(-2 * value + 2, 3) / 2;
+
+/**
+ * Story-mode camera: flies from the overview to a world, follows it while the
+ * orrery is paused, and returns to the overview when focus clears.
+ */
+const StoryCameraRig: React.FC<{
+  focusId: string | null;
+  controls: React.MutableRefObject<any>;
+  isMobile: boolean;
+}> = ({ focusId, controls, isMobile }) => {
+  const { camera } = useThree();
+  const anim = useRef({
+    active: false,
+    t: 0,
+    fromPos: new THREE.Vector3(),
+    fromTarget: new THREE.Vector3(),
+    toPos: new THREE.Vector3(),
+    toTarget: new THREE.Vector3(),
+  });
+  const focusedRef = useRef<string | null>(null);
+
+  useFrame((_, delta) => {
+    const orbit = controls.current;
+    const a = anim.current;
+    const planetPos = focusId ? PLANET_WORLD_POSITIONS.get(focusId) : null;
+
+    if (focusId && focusedRef.current !== focusId && planetPos) {
+      focusedRef.current = focusId;
+      const radius = PLANET_RADII.get(focusId) ?? 1;
+      const direction = new THREE.Vector3().subVectors(camera.position, planetPos);
+      if (direction.lengthSq() < 0.0001) direction.set(0, 0.4, 1);
+      direction.normalize();
+      const distance = Math.max(radius * 4.6, 1.7) + (isMobile ? 1.1 : 0.5);
+
+      a.active = true;
+      a.t = 0;
+      a.fromPos.copy(camera.position);
+      a.fromTarget.copy(orbit?.target ?? new THREE.Vector3());
+      a.toPos.copy(planetPos).addScaledVector(direction, distance);
+      a.toTarget.copy(planetPos);
+    } else if (!focusId && focusedRef.current) {
+      focusedRef.current = null;
+      a.active = true;
+      a.t = 0;
+      a.fromPos.copy(camera.position);
+      a.fromTarget.copy(orbit?.target ?? new THREE.Vector3());
+      a.toPos.set(0, isMobile ? 18 : 16, isMobile ? 30 : 26);
+      a.toTarget.set(0, 0, 0);
+    }
+
+    if (!a.active) return;
+
+    if (orbit) orbit.enabled = false;
+    a.t = Math.min(1, a.t + delta / 0.9);
+    const eased = easeInOutCubic(a.t);
+    camera.position.lerpVectors(a.fromPos, a.toPos, eased);
+    if (orbit) {
+      orbit.target.lerpVectors(a.fromTarget, a.toTarget, eased);
+      camera.lookAt(orbit.target);
+    } else {
+      camera.lookAt(a.toTarget);
+    }
+
+    if (a.t >= 1) {
+      a.active = false;
+      if (orbit) {
+        orbit.enabled = true;
+        orbit.update();
+      }
+    }
+  });
+
+  return null;
+};
+
 // --- 3D Authentic Planet Node in the Solar System Orrery ---
 interface OrbitingPlanetProps {
   planet: PlanetData;
   timeSpeed: number;
   showOrbits: boolean;
   isSelected: boolean;
+  visited: boolean;
+  orbitsPaused: boolean;
+  storyMode: boolean;
   onSelectAndZoom: (planet: PlanetData) => void;
 }
 
@@ -1168,19 +1267,65 @@ const OrbitingPlanetMesh: React.FC<OrbitingPlanetProps> = ({
   timeSpeed,
   showOrbits,
   isSelected,
+  visited,
+  orbitsPaused,
+  storyMode,
   onSelectAndZoom,
 }) => {
   const groupRef = useRef<THREE.Group>(null!);
+  const scaleGroupRef = useRef<THREE.Group>(null!);
+  const pulseRingRef = useRef<THREE.Mesh>(null!);
   const angleRef = useRef<number>(Math.random() * Math.PI * 2);
+  const pulseProgressRef = useRef<number>(0);
+  const worldPos = useMemo(() => new THREE.Vector3(), []);
+  const [hovered, setHovered] = useState(false);
+
+  const triggerSelectWithMicroAnimation = () => {
+    pulseProgressRef.current = 0.01;
+    onSelectAndZoom(planet);
+  };
 
   useFrame((_, delta) => {
-    if (planet.orbitRadius > 0) {
+    if (!orbitsPaused && planet.orbitRadius > 0) {
       angleRef.current += delta * planet.orbitSpeed * timeSpeed * 0.45;
       const x = Math.cos(angleRef.current) * planet.orbitRadius;
       const z = Math.sin(angleRef.current) * planet.orbitRadius;
       if (groupRef.current) {
         groupRef.current.position.set(x, 0, z);
       }
+    }
+
+    // 3D Micro-animation: smooth hover lift + click elastic pulse & shockwave ring
+    if (scaleGroupRef.current) {
+      let targetScale = hovered ? 1.08 : 1.0;
+      if (pulseProgressRef.current > 0) {
+        pulseProgressRef.current = Math.min(1, pulseProgressRef.current + delta * 2.4);
+        const p = pulseProgressRef.current;
+        targetScale += Math.sin(p * Math.PI) * 0.16;
+        if (pulseRingRef.current) {
+          pulseRingRef.current.visible = true;
+          const rScale = 1 + p * 1.65;
+          pulseRingRef.current.scale.set(rScale, rScale, rScale);
+          const mat = pulseRingRef.current.material as THREE.MeshBasicMaterial;
+          if (mat) mat.opacity = (1 - p) * 0.85;
+        }
+        if (p >= 1) {
+          pulseProgressRef.current = 0;
+          if (pulseRingRef.current) pulseRingRef.current.visible = false;
+        }
+      }
+      const cur = scaleGroupRef.current.scale.x;
+      const next = cur + (targetScale - cur) * Math.min(1, delta * 14);
+      scaleGroupRef.current.scale.setScalar(next);
+    }
+
+    // Keep the flight registry current so the camera can track a moving world
+    if (groupRef.current) {
+      groupRef.current.getWorldPosition(worldPos);
+      const stored = PLANET_WORLD_POSITIONS.get(planet.id);
+      if (stored) stored.copy(worldPos);
+      else PLANET_WORLD_POSITIONS.set(planet.id, worldPos.clone());
+      PLANET_RADII.set(planet.id, planet.radiusScale);
     }
   });
 
@@ -1190,38 +1335,66 @@ const OrbitingPlanetMesh: React.FC<OrbitingPlanetProps> = ({
         <mesh rotation={[-Math.PI / 2, 0, 0]}>
           <ringGeometry args={[planet.orbitRadius - 0.02, planet.orbitRadius + 0.02, 112]} />
           <meshBasicMaterial
-            color={isSelected ? '#ff3b21' : '#52525b'}
+            color={isSelected ? '#ff3b21' : visited ? '#38bdf8' : '#52525b'}
             side={THREE.DoubleSide}
             transparent
-            opacity={isSelected ? 0.85 : 0.32}
+            opacity={isSelected ? 0.85 : visited ? 0.5 : 0.28}
           />
         </mesh>
       )}
 
-      <group ref={groupRef} position={[planet.orbitRadius, 0, 0]}>
-        <PlanetGLBModel
-          planet={planet}
-          radius={planet.radiusScale}
-          isSelected={isSelected}
-          onClick={() => onSelectAndZoom(planet)}
-        />
+      <group
+        ref={groupRef}
+        position={[planet.orbitRadius, 0, 0]}
+        onPointerOver={() => {
+          setHovered(true);
+          haptics.light();
+        }}
+        onPointerOut={() => setHovered(false)}
+        onPointerDown={() => {
+          lastPlanetPointerDownAt = Date.now();
+        }}
+      >
+        <group ref={scaleGroupRef}>
+          <PlanetGLBModel
+            planet={planet}
+            radius={planet.radiusScale}
+            isSelected={isSelected}
+            onClick={triggerSelectWithMicroAnimation}
+          />
+          {/* Expanding Holographic Shockwave Ring on Click */}
+          <mesh ref={pulseRingRef} rotation={[-Math.PI / 2, 0, 0]} visible={false}>
+            <ringGeometry args={[planet.radiusScale * 1.05, planet.radiusScale * 1.18, 48]} />
+            <meshBasicMaterial
+              color="#38bdf8"
+              side={THREE.DoubleSide}
+              transparent
+              opacity={0.85}
+            />
+          </mesh>
+        </group>
 
-        <Html distanceFactor={18} position={[0, planet.radiusScale + 0.58, 0]} center>
-          <button
-            onClick={() => onSelectAndZoom(planet)}
-            className={`px-2.5 py-0.5 rounded-full text-[10px] font-mono uppercase tracking-wider whitespace-nowrap transition-all border ${
-              isSelected
-                ? 'bg-[#ff3b21] text-white font-bold border-white shadow-lg scale-105'
-                : 'bg-black/85 text-zinc-200 border-zinc-700 hover:border-[#ff3b21] hover:text-white'
-            }`}
-          >
-            {planet.id === 'sun'
-              ? 'THE SUN'
-              : planet.id === 'ceres'
-              ? '1 CERES'
-              : planet.name.split(' ')[0]}
-          </button>
-        </Html>
+        {(!storyMode || hovered || isSelected) && (
+          <Html distanceFactor={18} position={[0, planet.radiusScale + 0.58, 0]} center>
+            <button
+              onClick={triggerSelectWithMicroAnimation}
+              className={`px-2.5 py-0.5 rounded-full text-[10px] font-mono uppercase tracking-wider whitespace-nowrap transition-all border ${
+                isSelected
+                  ? 'bg-[#ff3b21] text-white font-bold border-white shadow-lg scale-105'
+                  : visited
+                  ? 'bg-black/85 text-cyan-200 border-cyan-500/50 hover:border-cyan-300'
+                  : 'bg-black/85 text-zinc-200 border-zinc-700 hover:border-[#ff3b21] hover:text-white'
+              }`}
+            >
+              {visited && !isSelected && <span className="text-cyan-400">✓ </span>}
+              {planet.id === 'sun'
+                ? 'THE SUN'
+                : planet.id === 'ceres'
+                ? '1 CERES'
+                : shortPlanetName(planet.name)}
+            </button>
+          </Html>
+        )}
       </group>
     </>
   );
@@ -1416,7 +1589,20 @@ export interface CosmicExplorer3DProps {
   onPlanetSelect?: (planetId: string) => void;
   onCraftSelect?: (craftId: string) => void;
   isBackgroundMode?: boolean;
+  /** Story Mode: hide the HUD and fly the camera to storyFocusId */
+  storyMode?: boolean;
+  storyFocusId?: string | null;
+  onEmptySpaceTap?: () => void;
 }
+
+/** Compact display name: "The Sun (Sol)" → "Sun", "1 Ceres (Asteroid Belt)" → "Ceres" */
+const shortPlanetName = (name: string): string =>
+  name
+    .replace(/^The /, '')
+    .replace(/^\d+ /, '')
+    .split(' (')[0]
+    .split(' &')[0]
+    .trim();
 
 export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
   externalPlanetId,
@@ -1426,12 +1612,15 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
   onPlanetSelect,
   onCraftSelect,
   isBackgroundMode = false,
+  storyMode = false,
+  storyFocusId = null,
+  onEmptySpaceTap,
 }) => {
   // View mode: Full Solar System Overview ('solar-system'), Close-Up Debris/Meteor View ('planet-closeup'), Spacecraft Hangar ('spacecraft')
   const [viewMode, setViewMode] = useState<'solar-system' | 'planet-closeup' | 'spacecraft'>(
     externalViewMode || 'solar-system'
   );
-  const [inspectorTab, setInspectorTab] = useState<'debris' | 'overview' | 'encyclopedia' | 'gravity' | 'quiz'>('debris');
+  const [inspectorTab, setInspectorTab] = useState<'debris' | 'overview' | 'encyclopedia' | 'gravity' | 'quiz'>('overview');
   const [selectedPlanet, setSelectedPlanet] = useState<PlanetData>(() => {
     if (externalPlanetId) {
       return SOLAR_SYSTEM_PLANETS.find((p) => p.id === externalPlanetId) || SOLAR_SYSTEM_PLANETS[3];
@@ -1470,7 +1659,7 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
   // Multi-Question Quiz State per Planet
   const [quizIndex, setQuizIndex] = useState<number>(0);
   const [selectedQuizAnswer, setSelectedQuizAnswer] = useState<number | null>(null);
-  const [answeredKeys, setAnsweredKeys] = useState<Record<string, boolean>>({});
+  const [lastQuizReward, setLastQuizReward] = useState<number>(0);
 
   const [selectedCraft, setSelectedCraft] = useState<SpacecraftData>(() => {
     if (externalCraftId) {
@@ -1486,8 +1675,12 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
     markPlanetInspected,
     markHotspotScanned,
     scannedHotspots,
-    addXp,
+    inspectedPlanets,
+    recordQuizCorrect,
   } = useAcademyStore();
+
+  const orbitControlsRef = useRef<any>(null);
+  const pointerStartRef = useRef<{ x: number; y: number; t: number } | null>(null);
 
   // Sync with external props
   useEffect(() => {
@@ -1539,12 +1732,32 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
     haptics.medium();
     soundFX.playScanPing();
     setSelectedPlanet(planet);
+    markPlanetInspected(planet.id, planet.name);
+    if (onPlanetSelect) onPlanetSelect(planet.id);
+
+    if (storyMode) return;
+
     setViewMode('planet-closeup');
     setQuizIndex(0);
     setSelectedQuizAnswer(null);
-    markPlanetInspected(planet.id);
-    if (onPlanetSelect) onPlanetSelect(planet.id);
     if (onViewModeChange) onViewModeChange('planet-closeup');
+  };
+
+  // Story Mode: a tap on empty space (not a drag, not a planet) opens the deck
+  const handleSurfacePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!storyMode) return;
+    pointerStartRef.current = { x: event.clientX, y: event.clientY, t: Date.now() };
+  };
+
+  const handleSurfacePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!storyMode) return;
+    const start = pointerStartRef.current;
+    pointerStartRef.current = null;
+    if (!start) return;
+    const moved = Math.hypot(event.clientX - start.x, event.clientY - start.y);
+    if (moved > 9 || Date.now() - start.t > 550) return;
+    if (Date.now() - lastPlanetPointerDownAt < 320) return;
+    onEmptySpaceTap?.();
   };
 
   const handleReturnToSolarSystem = () => {
@@ -1577,7 +1790,7 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
     setSelectedPlanet(nextPlanet);
     setQuizIndex(0);
     setSelectedQuizAnswer(null);
-    markPlanetInspected(nextPlanet.id);
+    markPlanetInspected(nextPlanet.id, nextPlanet.name);
     if (onPlanetSelect) onPlanetSelect(nextPlanet.id);
   };
 
@@ -1589,7 +1802,11 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
   const currentDebrisInfo = PLANET_DEBRIS_DATA[selectedPlanet.id] || PLANET_DEBRIS_DATA.earth;
 
   return (
-    <div className="fixed inset-0 w-screen h-screen overflow-hidden bg-[#020306] z-0 select-none">
+    <div
+      className="fixed inset-0 w-screen h-screen overflow-hidden bg-[#020306] z-0 select-none"
+      onPointerDown={handleSurfacePointerDown}
+      onPointerUp={handleSurfacePointerUp}
+    >
       {/* 1. Full-Screen WebGL Canvas living edge-to-edge */}
       <div className="absolute inset-0 w-full h-full z-0">
         <Canvas
@@ -1605,7 +1822,14 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
             fov: 42,
           }}
         >
-          <CameraController viewMode={viewMode} isMobile={isMobile} />
+          {!storyMode && <CameraController viewMode={viewMode} isMobile={isMobile} />}
+          {storyMode && (
+            <StoryCameraRig
+              focusId={storyFocusId ?? null}
+              controls={orbitControlsRef}
+              isMobile={isMobile}
+            />
+          )}
           <color attach="background" args={['#020306']} />
           <ambientLight intensity={viewMode === 'planet-closeup' ? 0.16 : 0.22} />
           <hemisphereLight args={['#38bdf8', '#020617', 0.25]} />
@@ -1616,7 +1840,13 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
 
           {viewMode === 'solar-system' ? (
             <group>
-              <AsteroidBelt3D timeSpeed={timeSpeed} />
+              <AsteroidBelt3D
+                timeSpeed={timeSpeed}
+                onSelectAsteroidBelt={() => {
+                  const ceres = SOLAR_SYSTEM_PLANETS.find((p) => p.id === 'ceres');
+                  if (ceres) handleSelectPlanetAndZoom(ceres);
+                }}
+              />
               {SOLAR_SYSTEM_PLANETS.filter((p) => p.id !== 'moon').map((planet) => (
                 <OrbitingPlanetMesh
                   key={planet.id}
@@ -1624,6 +1854,9 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
                   timeSpeed={timeSpeed}
                   showOrbits={showOrbits}
                   isSelected={selectedPlanet.id === planet.id}
+                  visited={inspectedPlanets.includes(planet.id)}
+                  orbitsPaused={storyMode && storyFocusId === planet.id}
+                  storyMode={storyMode}
                   onSelectAndZoom={handleSelectPlanetAndZoom}
                 />
               ))}
@@ -1650,6 +1883,7 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
           )}
 
           <OrbitControls
+            ref={orbitControlsRef}
             enableDamping={true}
             dampingFactor={0.06}
             touches={{ ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN }}
@@ -1666,7 +1900,7 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
       </div>
 
       {/* 2. Interactive Zajno Aerospace HUD (rendered when not masked by an overlay deck) */}
-      {!isBackgroundMode && (
+      {!isBackgroundMode && !storyMode && (
         <div className="absolute inset-0 z-10 pointer-events-none">
           {/* Subtle Corner Technical Markings (+) */}
           <div className="absolute top-4 left-4 text-xs font-mono text-zinc-600 select-none">+</div>
@@ -1685,7 +1919,7 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
               }}
               className={`px-2.5 sm:px-3 py-1 rounded-full text-[10px] sm:text-[11px] font-mono uppercase tracking-wider flex items-center gap-1 sm:gap-1.5 transition-all whitespace-nowrap ${
                 viewMode === 'solar-system'
-                  ? 'bg-white text-black font-bold shadow-sm'
+                  ? 'bg-cyan-400 text-slate-950 font-bold shadow-sm'
                   : 'text-zinc-400 hover:text-white'
               }`}
             >
@@ -1702,12 +1936,12 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
               }}
               className={`px-2.5 sm:px-3 py-1 rounded-full text-[10px] sm:text-[11px] font-mono uppercase tracking-wider flex items-center gap-1 sm:gap-1.5 transition-all whitespace-nowrap ${
                 viewMode === 'planet-closeup'
-                  ? 'bg-[#ff3b21] text-white font-bold shadow-sm'
+                  ? 'bg-cyan-400 text-slate-950 font-bold shadow-sm'
                   : 'text-zinc-400 hover:text-white'
               }`}
             >
               <Crosshair className="h-3 w-3" />
-              <span>02 // {selectedPlanet.name.split(' ')[0]}</span>
+              <span>02 // {shortPlanetName(selectedPlanet.name)}</span>
             </button>
 
             <button
@@ -1719,7 +1953,7 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
               }}
               className={`px-2.5 sm:px-3 py-1 rounded-full text-[10px] sm:text-[11px] font-mono uppercase tracking-wider flex items-center gap-1 sm:gap-1.5 transition-all whitespace-nowrap ${
                 viewMode === 'spacecraft'
-                  ? 'bg-amber-400 text-black font-bold shadow-sm'
+                  ? 'bg-cyan-400 text-slate-950 font-bold shadow-sm'
                   : 'text-zinc-400 hover:text-white'
               }`}
             >
@@ -1737,9 +1971,9 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
             </button>
 
             {/* 3D Asset Indicator Badge */}
-            <div className="hidden md:flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-950/70 border border-emerald-500/40 text-[9px] font-mono text-emerald-400 shrink-0">
+            <div className="hidden md:flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-950/70 border border-emerald-500/40 text-[10px] font-mono text-emerald-400 shrink-0">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              <span>20 GLB MODELS ONLINE</span>
+              <span>LIVE 3D ASSETS</span>
             </div>
           </div>
 
@@ -1751,7 +1985,7 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
                   className={
                     isMobile
                       ? 'fixed inset-x-3 sm:inset-x-6 top-24 bottom-24 z-30 pointer-events-auto max-w-md mx-auto flex flex-col justify-between overflow-y-auto no-scrollbar gap-3 animate-in fade-in slide-in-from-bottom-4 duration-300'
-                      : 'fixed left-4 sm:left-6 top-28 bottom-6 w-80 sm:w-84 max-w-[calc(100vw-2rem)] z-20 pointer-events-auto flex flex-col justify-between overflow-y-auto no-scrollbar gap-3 animate-in fade-in slide-in-from-left-4 duration-300'
+                      : 'fixed left-4 sm:left-6 top-28 bottom-28 w-80 sm:w-[21rem] max-w-[calc(100vw-2rem)] z-20 pointer-events-auto flex flex-col justify-between overflow-y-auto no-scrollbar gap-3 animate-in fade-in slide-in-from-left-4 duration-300'
                   }
                 >
                   <div className="holo-panel-3d border border-zinc-800/90 rounded-2xl p-4 sm:p-5 space-y-4">
@@ -1774,7 +2008,7 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
                         <span className="text-[10px] font-mono uppercase tracking-widest text-zinc-400">
                           SECTOR 0{selectedPlanetIndex + 1} // ORBITAL STATION
                         </span>
-                        <span className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300">
+                        <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300">
                           {selectedPlanet.gravityRatio}g
                         </span>
                       </div>
@@ -1802,19 +2036,19 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
                     {/* Telemetry Metrics Grid */}
                     <div className="grid grid-cols-2 gap-2 font-mono">
                       <div className="bg-black/90 border border-zinc-800/90 rounded-xl p-2.5">
-                        <div className="text-[9px] text-zinc-400 uppercase">ESCAPE VELOCITY</div>
+                        <div className="text-[10px] text-zinc-400 uppercase">ESCAPE VELOCITY</div>
                         <div className="text-xs font-bold text-emerald-400 mt-0.5">{selectedPlanet.escapeVelocity}</div>
                       </div>
                       <div className="bg-black/90 border border-zinc-800/90 rounded-xl p-2.5">
-                        <div className="text-[9px] text-zinc-400 uppercase">SURFACE TEMP</div>
+                        <div className="text-[10px] text-zinc-400 uppercase">SURFACE TEMP</div>
                         <div className="text-xs font-bold text-amber-300 mt-0.5">{selectedPlanet.avgTemp}</div>
                       </div>
                       <div className="bg-black/90 border border-zinc-800/90 rounded-xl p-2.5">
-                        <div className="text-[9px] text-zinc-400 uppercase">DAY DURATION</div>
+                        <div className="text-[10px] text-zinc-400 uppercase">DAY DURATION</div>
                         <div className="text-xs font-bold text-white mt-0.5 truncate">{selectedPlanet.dayLength}</div>
                       </div>
                       <div className="bg-black/90 border border-zinc-800/90 rounded-xl p-2.5">
-                        <div className="text-[9px] text-zinc-400 uppercase">ORBIT VELOCITY</div>
+                        <div className="text-[10px] text-zinc-400 uppercase">ORBIT VELOCITY</div>
                         <div className="text-xs font-bold text-purple-300 mt-0.5">{selectedPlanet.orbitalSpeed}</div>
                       </div>
                     </div>
@@ -1823,7 +2057,7 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
                     <div className="space-y-1.5 bg-black/90 border border-zinc-800/90 rounded-xl p-3">
                       <div className="text-[10px] font-mono uppercase text-cyan-400 font-semibold flex items-center justify-between">
                         <span>Atmosphere Trace</span>
-                        <span className="text-[9px] text-zinc-500 font-mono">Forensics</span>
+                        <span className="text-[10px] text-zinc-500 font-mono">Forensics</span>
                       </div>
                       <div className="space-y-1.5 pt-1">
                         {selectedPlanet.atmosphereComposition.slice(0, 3).map((comp) => (
@@ -1847,7 +2081,7 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
                     <div className="bg-black/90 border border-zinc-800/90 rounded-xl p-3 space-y-2">
                       <div className="text-[10px] font-mono uppercase text-zinc-400 flex items-center justify-between">
                         <span>Orbital Optics</span>
-                        <span className="text-[9px] font-mono text-[#ff3b21] font-bold">ZAJNO SPEC</span>
+                        <span className="text-[10px] font-mono text-[#ff3b21] font-bold">ZAJNO SPEC</span>
                       </div>
                       <div className="grid grid-cols-3 gap-1.5">
                         <button
@@ -1891,7 +2125,7 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
                   >
                     <ArrowLeft className="h-4 w-4 text-[#ff3b21]" />
                     <span>Return to Solar Orbit</span>
-                    <kbd className="px-1.5 py-0.5 rounded bg-zinc-800 text-[9px] text-zinc-300">ESC</kbd>
+                    <kbd className="px-1.5 py-0.5 rounded bg-zinc-800 text-[10px] text-zinc-300">ESC</kbd>
                   </button>
                 </div>
               )}
@@ -1901,7 +2135,7 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
                   className={
                     isMobile
                       ? 'fixed inset-x-3 sm:inset-x-6 top-24 bottom-24 z-30 pointer-events-auto max-w-md mx-auto flex flex-col gap-3 animate-in fade-in slide-in-from-bottom-4 duration-300'
-                      : 'fixed left-4 sm:left-6 top-28 w-80 sm:w-84 max-w-[calc(100vw-2rem)] z-20 pointer-events-auto flex flex-col gap-3 animate-in fade-in slide-in-from-left-4 duration-300'
+                      : 'fixed left-4 sm:left-6 top-28 w-80 sm:w-[21rem] max-w-[calc(100vw-2rem)] z-20 pointer-events-auto flex flex-col gap-3 animate-in fade-in slide-in-from-left-4 duration-300'
                   }
                 >
                   <div className="holo-panel-3d border border-zinc-800/90 rounded-2xl p-4 sm:p-5 space-y-4">
@@ -1984,7 +2218,7 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
                   className={
                     isMobile
                       ? 'fixed inset-x-3 sm:inset-x-6 top-24 bottom-24 z-30 pointer-events-auto max-w-md mx-auto flex flex-col justify-between overflow-y-auto no-scrollbar gap-3 animate-in fade-in slide-in-from-bottom-4 duration-300'
-                      : 'fixed left-4 sm:left-6 top-28 bottom-6 w-80 sm:w-84 max-w-[calc(100vw-2rem)] z-20 pointer-events-auto flex flex-col justify-between overflow-y-auto no-scrollbar gap-3 animate-in fade-in slide-in-from-left-4 duration-300'
+                      : 'fixed left-4 sm:left-6 top-28 bottom-28 w-80 sm:w-[21rem] max-w-[calc(100vw-2rem)] z-20 pointer-events-auto flex flex-col justify-between overflow-y-auto no-scrollbar gap-3 animate-in fade-in slide-in-from-left-4 duration-300'
                   }
                 >
                   <div className="holo-panel-3d border border-zinc-800/90 rounded-2xl p-4 sm:p-5 space-y-3">
@@ -2033,7 +2267,7 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
                             >
                               <div className="text-base">{craft.badgeEmoji}</div>
                               <div className="text-xs font-semibold truncate text-white mt-1">{craft.name}</div>
-                              <div className="text-[9px] font-mono text-zinc-400 truncate">{craft.year}</div>
+                              <div className="text-[10px] font-mono text-zinc-400 truncate">{craft.year}</div>
                             </button>
                           );
                         })}
@@ -2047,7 +2281,7 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
                   >
                     <ArrowLeft className="h-4 w-4 text-[#ff3b21]" />
                     <span>Return to Solar Orbit</span>
-                    <kbd className="px-1.5 py-0.5 rounded bg-zinc-800 text-[9px] text-zinc-300">ESC</kbd>
+                    <kbd className="px-1.5 py-0.5 rounded bg-zinc-800 text-[10px] text-zinc-300">ESC</kbd>
                   </button>
                 </div>
               )}
@@ -2064,7 +2298,7 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
                     className="px-4 py-2.5 rounded-full bg-black/90 hover:bg-zinc-900 border border-zinc-700 hover:border-cyan-400 text-xs font-mono uppercase font-bold text-white flex items-center gap-2 shadow-2xl backdrop-blur-xl"
                   >
                     <span className="w-2 h-2 rounded-full bg-[#ff3b21]" />
-                    <span>Forensic Deck ({selectedPlanet.name.split(' ')[0]})</span>
+                    <span>Planet deck ({shortPlanetName(selectedPlanet.name)})</span>
                     <Maximize2 className="h-3.5 w-3.5 text-cyan-400" />
                   </button>
                 </div>
@@ -2073,7 +2307,7 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
                   className={
                     isMobile
                       ? 'fixed inset-x-3 sm:inset-x-6 top-24 bottom-24 z-30 pointer-events-auto max-w-md mx-auto flex flex-col justify-start transition-all duration-300 animate-in fade-in slide-in-from-bottom-4'
-                      : 'fixed right-4 sm:right-6 top-28 bottom-6 w-96 max-w-[calc(100vw-2rem)] z-20 pointer-events-auto flex flex-col justify-start transition-all duration-300'
+                      : 'fixed right-4 sm:right-6 top-28 bottom-28 w-96 max-w-[calc(100vw-2rem)] z-20 pointer-events-auto flex flex-col justify-start transition-all duration-300'
                   }
                 >
                   <TiltCard3D intensity={2} className="holo-panel-3d border border-zinc-800/90 rounded-2xl p-4 sm:p-5 flex flex-col max-h-full overflow-hidden shadow-2xl">
@@ -2086,7 +2320,7 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
                         />
                         <div>
                           <div className="text-[10px] font-mono uppercase tracking-wider text-[#ff3b21] font-bold">
-                            PLANETARY FORENSICS
+                            PLANET EXPLORER
                           </div>
                           <div className="text-sm font-bold text-white">
                             {selectedPlanet.name.toUpperCase()} // DECK
@@ -2198,25 +2432,25 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
                           {/* 2x2 Orbital Debris & Meteoroid Statistics Grid */}
                           <div className="grid grid-cols-2 gap-2 font-mono">
                             <div className="bg-black/90 border border-zinc-800 rounded-xl p-2.5">
-                              <div className="text-[9px] text-zinc-400 uppercase">ARTIFICIAL OBJECTS</div>
+                              <div className="text-[10px] text-zinc-400 uppercase">ARTIFICIAL OBJECTS</div>
                               <div className="text-xs font-bold text-[#ff3b21] mt-0.5">
                                 {currentDebrisInfo.trackedDebrisCount}
                               </div>
                             </div>
                             <div className="bg-black/90 border border-zinc-800 rounded-xl p-2.5">
-                              <div className="text-[9px] text-zinc-400 uppercase">MICRO-FRAGMENTS / DUST</div>
+                              <div className="text-[10px] text-zinc-400 uppercase">MICRO-FRAGMENTS / DUST</div>
                               <div className="text-xs font-bold text-white mt-0.5">
                                 {currentDebrisInfo.microFragmentsEstimate}
                               </div>
                             </div>
                             <div className="bg-black/90 border border-zinc-800 rounded-xl p-2.5">
-                              <div className="text-[9px] text-zinc-400 uppercase">DAILY METEOR INFLUX</div>
+                              <div className="text-[10px] text-zinc-400 uppercase">DAILY METEOR INFLUX</div>
                               <div className="text-xs font-bold text-amber-400 mt-0.5">
                                 {currentDebrisInfo.meteoroidFluxPerDay}
                               </div>
                             </div>
                             <div className="bg-black/90 border border-zinc-800 rounded-xl p-2.5">
-                              <div className="text-[9px] text-zinc-400 uppercase">IMPACT VELOCITY</div>
+                              <div className="text-[10px] text-zinc-400 uppercase">IMPACT VELOCITY</div>
                               <div className="text-xs font-bold text-cyan-300 mt-0.5">
                                 {currentDebrisInfo.avgImpactVelocity}
                               </div>
@@ -2275,35 +2509,35 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
 
                           <div className="grid grid-cols-2 gap-2 font-mono">
                             <div className="bg-black border border-zinc-800 rounded-xl p-2.5">
-                              <div className="text-[9px] text-zinc-400">DISTANCE FROM SUN</div>
+                              <div className="text-[10px] text-zinc-400">DISTANCE FROM SUN</div>
                               <div className="text-xs font-bold text-cyan-300 mt-0.5">{selectedPlanet.distanceFromSun}</div>
                             </div>
                             <div className="bg-black border border-zinc-800 rounded-xl p-2.5">
-                              <div className="text-[9px] text-zinc-400">SURFACE TEMPERATURE</div>
+                              <div className="text-[10px] text-zinc-400">SURFACE TEMPERATURE</div>
                               <div className="text-xs font-bold text-amber-300 mt-0.5">{selectedPlanet.avgTemp}</div>
                             </div>
                             <div className="bg-black border border-zinc-800 rounded-xl p-2.5">
-                              <div className="text-[9px] text-zinc-400">LENGTH OF 1 DAY</div>
+                              <div className="text-[10px] text-zinc-400">LENGTH OF 1 DAY</div>
                               <div className="text-xs font-bold text-white mt-0.5">{selectedPlanet.dayLength}</div>
                             </div>
                             <div className="bg-black border border-zinc-800 rounded-xl p-2.5">
-                              <div className="text-[9px] text-zinc-400">LENGTH OF 1 YEAR</div>
+                              <div className="text-[10px] text-zinc-400">LENGTH OF 1 YEAR</div>
                               <div className="text-xs font-bold text-white mt-0.5">{selectedPlanet.yearLength}</div>
                             </div>
                             <div className="bg-black border border-zinc-800 rounded-xl p-2.5">
-                              <div className="text-[9px] text-zinc-400">ESCAPE VELOCITY</div>
+                              <div className="text-[10px] text-zinc-400">ESCAPE VELOCITY</div>
                               <div className="text-xs font-bold text-emerald-300 mt-0.5">{selectedPlanet.escapeVelocity}</div>
                             </div>
                             <div className="bg-black border border-zinc-800 rounded-xl p-2.5">
-                              <div className="text-[9px] text-zinc-400">ORBITAL SPEED</div>
+                              <div className="text-[10px] text-zinc-400">ORBITAL SPEED</div>
                               <div className="text-xs font-bold text-purple-300 mt-0.5">{selectedPlanet.orbitalSpeed}</div>
                             </div>
                             <div className="bg-black border border-zinc-800 rounded-xl p-2.5">
-                              <div className="text-[9px] text-zinc-400">AXIAL TILT</div>
+                              <div className="text-[10px] text-zinc-400">AXIAL TILT</div>
                               <div className="text-xs font-bold text-cyan-200 mt-0.5">{selectedPlanet.axialTilt}</div>
                             </div>
                             <div className="bg-black border border-zinc-800 rounded-xl p-2.5">
-                              <div className="text-[9px] text-zinc-400">SUNLIGHT TRAVEL TIME</div>
+                              <div className="text-[10px] text-zinc-400">SUNLIGHT TRAVEL TIME</div>
                               <div className="text-xs font-bold text-amber-200 mt-0.5">{selectedPlanet.lightTimeFromSun}</div>
                             </div>
                           </div>
@@ -2389,7 +2623,7 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
 
                           <div className="space-y-2">
                             <div className="text-[11px] font-mono uppercase text-amber-400 font-semibold">
-                              {selectedPlanet.funFacts.length} Mind-Blowing Fun Facts About {selectedPlanet.name.split(' ')[0]}
+                              {selectedPlanet.funFacts.length} Mind-Blowing Fun Facts About {shortPlanetName(selectedPlanet.name)}
                             </div>
                             {selectedPlanet.funFacts.map((fact, i) => (
                               <div key={i} className="text-xs text-zinc-200 bg-black border border-zinc-800 rounded-xl p-2.5 leading-relaxed">
@@ -2450,17 +2684,19 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
                                     setSelectedQuizAnswer(idx);
                                     if (isCorrect) {
                                       soundFX.playSuccessChime();
-                                      if (!answeredKeys[quizKey]) {
-                                        setAnsweredKeys((prev) => ({ ...prev, [quizKey]: true }));
-                                        addXp(30, `Correct answer on ${selectedPlanet.name} Quiz!`);
-                                      }
+                                      const awarded = recordQuizCorrect(
+                                        quizKey,
+                                        30,
+                                        `Correct answer on ${selectedPlanet.name} quiz`
+                                      );
+                                      setLastQuizReward(awarded ? 30 : 0);
                                     } else {
                                       soundFX.playAlert();
                                     }
                                   }}
                                   className={`w-full text-left px-3.5 py-2.5 rounded-xl text-xs border transition-all flex items-center justify-between ${
                                     selectedQuizAnswer === null
-                                      ? 'bg-black border-zinc-800 hover:border-[#ff3b21] text-zinc-200'
+                                      ? 'bg-black border-zinc-800 hover:border-cyan-400 text-zinc-200'
                                       : isChosen && isCorrect
                                       ? 'bg-emerald-950/50 border-emerald-400 text-emerald-200 font-semibold'
                                       : isChosen && !isCorrect
@@ -2482,10 +2718,11 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
                           {selectedQuizAnswer !== null && (
                             <div className="space-y-2.5 animate-in fade-in duration-200">
                               <div className="text-xs text-zinc-100 bg-black border border-zinc-700 rounded-xl p-3 leading-relaxed">
-                                <div className="font-mono font-bold text-emerald-400 mb-1">
-                                  {selectedQuizAnswer === currentQuiz.correctIndex
-                                    ? '✅ Correct! +30 Space XP Earned!'
-                                    : '💡 Good try! Here is the science:'}
+                                <div className="font-mono font-bold text-emerald-400 mb-1">                                    {selectedQuizAnswer === currentQuiz.correctIndex
+                                      ? lastQuizReward > 0
+                                        ? '✅ Correct! +30 Space XP earned!'
+                                        : '✅ Correct! (already counted)'
+                                      : '💡 Good try! Here is the science:'}
                                 </div>
                                 {currentQuiz.explanation}
                               </div>
@@ -2517,7 +2754,7 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
               className={
                 isMobile
                   ? 'fixed inset-x-3 sm:inset-x-6 top-24 bottom-24 z-30 pointer-events-auto max-w-md mx-auto flex flex-col justify-start transition-all duration-300 animate-in fade-in slide-in-from-bottom-4'
-                  : 'fixed right-4 sm:right-6 top-28 bottom-6 w-96 max-w-[calc(100vw-2rem)] z-20 pointer-events-auto flex flex-col justify-start transition-all duration-300'
+                  : 'fixed right-4 sm:right-6 top-28 bottom-28 w-96 max-w-[calc(100vw-2rem)] z-20 pointer-events-auto flex flex-col justify-start transition-all duration-300'
               }
             >
               <TiltCard3D intensity={2} className="holo-panel-3d border border-zinc-800/90 rounded-2xl p-4 sm:p-5 flex flex-col max-h-full overflow-y-auto no-scrollbar shadow-2xl space-y-3.5">
@@ -2545,11 +2782,11 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
 
                 <div className="grid grid-cols-2 gap-2 font-mono">
                   <div className="bg-black border border-zinc-800 rounded-lg p-2">
-                    <div className="text-[9px] text-zinc-400">LAUNCH VEHICLE</div>
+                    <div className="text-[10px] text-zinc-400">LAUNCH VEHICLE</div>
                     <div className="text-[11px] font-bold text-cyan-300 truncate">{selectedCraft.launchVehicle}</div>
                   </div>
                   <div className="bg-black border border-zinc-800 rounded-lg p-2">
-                    <div className="text-[9px] text-zinc-400">MAX VELOCITY</div>
+                    <div className="text-[10px] text-zinc-400">MAX VELOCITY</div>
                     <div className="text-[11px] font-bold text-amber-300 truncate">{selectedCraft.maxSpeed}</div>
                   </div>
                 </div>
@@ -2641,7 +2878,7 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
                           {viewMode === 'spacecraft' ? selectedCraft.name : selectedPlanet.name}
                         </span>
                         {viewMode !== 'spacecraft' && (
-                          <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-300">
+                          <span className="text-[10px] font-mono px-1.5 py-px rounded bg-zinc-800 text-zinc-300">
                             {selectedPlanet.gravityRatio}g
                           </span>
                         )}
@@ -2728,19 +2965,19 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
                           {/* Metrics Grid */}
                           <div className="grid grid-cols-2 gap-2 font-mono">
                             <div className="bg-black/80 border border-zinc-800 rounded-xl p-2.5">
-                              <div className="text-[9px] text-zinc-400 uppercase">ESCAPE VELOCITY</div>
+                              <div className="text-[10px] text-zinc-400 uppercase">ESCAPE VELOCITY</div>
                               <div className="text-xs font-bold text-emerald-400 mt-0.5">{selectedPlanet.escapeVelocity}</div>
                             </div>
                             <div className="bg-black/80 border border-zinc-800 rounded-xl p-2.5">
-                              <div className="text-[9px] text-zinc-400 uppercase">SURFACE TEMP</div>
+                              <div className="text-[10px] text-zinc-400 uppercase">SURFACE TEMP</div>
                               <div className="text-xs font-bold text-amber-300 mt-0.5">{selectedPlanet.avgTemp}</div>
                             </div>
                             <div className="bg-black/80 border border-zinc-800 rounded-xl p-2.5">
-                              <div className="text-[9px] text-zinc-400 uppercase">DAY LENGTH</div>
+                              <div className="text-[10px] text-zinc-400 uppercase">DAY LENGTH</div>
                               <div className="text-xs font-bold text-white mt-0.5 truncate">{selectedPlanet.dayLength}</div>
                             </div>
                             <div className="bg-black/80 border border-zinc-800 rounded-xl p-2.5">
-                              <div className="text-[9px] text-zinc-400 uppercase">ORBIT VELOCITY</div>
+                              <div className="text-[10px] text-zinc-400 uppercase">ORBIT VELOCITY</div>
                               <div className="text-xs font-bold text-purple-300 mt-0.5">{selectedPlanet.orbitalSpeed}</div>
                             </div>
                           </div>
@@ -2749,7 +2986,7 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
                           <div className="space-y-2 bg-black/80 border border-zinc-800 rounded-xl p-3">
                             <div className="text-[10px] font-mono uppercase text-cyan-400 font-semibold flex items-center justify-between">
                               <span>Atmospheric Gas Composition</span>
-                              <span className="text-[9px] text-zinc-500 font-mono">Spectroscopy</span>
+                              <span className="text-[10px] text-zinc-500 font-mono">Spectroscopy</span>
                             </div>
                             <div className="space-y-1.5 pt-1">
                               {selectedPlanet.atmosphereComposition.map((comp) => (
@@ -2800,15 +3037,15 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
                           {/* Debris Counts */}
                           <div className="grid grid-cols-2 gap-2 font-mono">
                             <div className="bg-black/80 border border-zinc-800 rounded-xl p-2.5">
-                              <div className="text-[9px] text-zinc-400 uppercase">TRACKED OBJECTS</div>
+                              <div className="text-[10px] text-zinc-400 uppercase">TRACKED OBJECTS</div>
                               <div className="text-xs font-bold text-white mt-0.5">{currentDebrisInfo.trackedDebrisCount}</div>
                             </div>
                             <div className="bg-black/80 border border-zinc-800 rounded-xl p-2.5">
-                              <div className="text-[9px] text-zinc-400 uppercase">IMPACT VELOCITY</div>
+                              <div className="text-[10px] text-zinc-400 uppercase">IMPACT VELOCITY</div>
                               <div className="text-xs font-bold text-[#ff3b21] mt-0.5">{currentDebrisInfo.avgImpactVelocity}</div>
                             </div>
                             <div className="col-span-2 bg-black/80 border border-zinc-800 rounded-xl p-2.5">
-                              <div className="text-[9px] text-zinc-400 uppercase">MICRO-DEBRIS ESTIMATE</div>
+                              <div className="text-[10px] text-zinc-400 uppercase">MICRO-DEBRIS ESTIMATE</div>
                               <div className="text-xs font-bold text-amber-300 mt-0.5">{currentDebrisInfo.microFragmentsEstimate}</div>
                             </div>
                           </div>
@@ -2908,17 +3145,18 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
                                       setSelectedQuizAnswer(idx);
                                       if (isCorrect) {
                                         soundFX.playSuccessChime();
-                                        if (!answeredKeys[quizKey]) {
-                                          setAnsweredKeys((prev) => ({ ...prev, [quizKey]: true }));
-                                          addXp(30, `Correct answer on ${selectedPlanet.name} Quiz!`);
-                                        }
+                                        recordQuizCorrect(
+                                          quizKey,
+                                          30,
+                                          `Correct answer on ${selectedPlanet.name} quiz`
+                                        );
                                       } else {
                                         soundFX.playAlert();
                                       }
                                     }}
                                     className={`w-full text-left p-3 rounded-xl text-xs border transition-all active:scale-95 flex items-center justify-between ${
                                       selectedQuizAnswer === null
-                                        ? 'bg-zinc-950 border-zinc-800 hover:border-[#ff3b21] text-zinc-200'
+                                        ? 'bg-zinc-950 border-zinc-800 hover:border-cyan-400 text-zinc-200'
                                         : isChosen && isCorrect
                                         ? 'bg-emerald-950/60 border-emerald-400 text-emerald-200 font-bold'
                                         : isChosen && !isCorrect
@@ -3015,19 +3253,19 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
                         <div className="space-y-2.5 animate-in fade-in duration-200">
                           <div className="grid grid-cols-2 gap-2 font-mono">
                             <div className="bg-black border border-zinc-800 rounded-xl p-2.5">
-                              <div className="text-[9px] text-zinc-400 uppercase">LAUNCH YEAR</div>
+                              <div className="text-[10px] text-zinc-400 uppercase">LAUNCH YEAR</div>
                               <div className="text-xs font-bold text-white mt-0.5">{selectedCraft.year}</div>
                             </div>
                             <div className="bg-black border border-zinc-800 rounded-xl p-2.5">
-                              <div className="text-[9px] text-zinc-400 uppercase">DESTINATION</div>
+                              <div className="text-[10px] text-zinc-400 uppercase">DESTINATION</div>
                               <div className="text-xs font-bold text-amber-300 mt-0.5 truncate">{selectedCraft.destination}</div>
                             </div>
                             <div className="bg-black border border-zinc-800 rounded-xl p-2.5">
-                              <div className="text-[9px] text-zinc-400 uppercase">MISSION STATUS</div>
+                              <div className="text-[10px] text-zinc-400 uppercase">MISSION STATUS</div>
                               <div className="text-xs font-bold text-cyan-300 mt-0.5 truncate">{selectedCraft.status}</div>
                             </div>
                             <div className="bg-black border border-zinc-800 rounded-xl p-2.5">
-                              <div className="text-[9px] text-zinc-400 uppercase">MAX SPEED</div>
+                              <div className="text-[10px] text-zinc-400 uppercase">MAX SPEED</div>
                               <div className="text-xs font-bold text-emerald-400 mt-0.5">{selectedCraft.maxSpeed}</div>
                             </div>
                           </div>
@@ -3071,7 +3309,7 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
                             }}
                             className={`micro-card py-2 px-2.5 sm:px-1.5 rounded-xl border text-center transition-all shrink-0 w-20 sm:w-auto active:scale-95 ${
                               active
-                                ? 'bg-[#ff3b21]/20 border-[#ff3b21] shadow-md shadow-[#ff3b21]/20'
+                                ? 'bg-cyan-500/20 border-cyan-400 shadow-md shadow-cyan-500/20'
                                 : 'bg-black/60 border-zinc-800 hover:border-zinc-700 hover:bg-zinc-900/60'
                             }`}
                           >
@@ -3080,9 +3318,9 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
                               style={{ backgroundColor: planet.color }}
                             />
                             <div className="text-[10px] font-semibold text-white truncate">
-                              {planet.name.split(' ')[0]}
+                              {shortPlanetName(planet.name)}
                             </div>
-                            <div className="text-[8px] font-mono text-zinc-400 uppercase">
+                            <div className="text-[10px] font-mono text-zinc-400 uppercase">
                               {planet.gravityRatio}g
                             </div>
                           </button>
@@ -3104,7 +3342,7 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
                     <ChevronLeft className="h-4 w-4" />
                   </button>
 
-                  <div className="hidden xs:flex items-center gap-1.5 px-1 shrink-0">
+                  <div className="hidden sm:flex items-center gap-1.5 px-1 shrink-0">
                     {SOLAR_SYSTEM_PLANETS.map((p) => {
                       const active = p.id === selectedPlanet.id;
                       return (
@@ -3124,7 +3362,7 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
                   </div>
 
                   <span className="text-xs font-mono font-bold text-white px-2.5 py-0.5 rounded-full bg-zinc-900 border border-zinc-800 shrink-0">
-                    {selectedPlanet.name.split(' ')[0]}
+                    {shortPlanetName(selectedPlanet.name)}
                   </span>
 
                   <button

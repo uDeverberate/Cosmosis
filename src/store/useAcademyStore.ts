@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 import { AcademyTab } from '../types/academy';
 import { ACADEMY_BADGES } from '../data/spaceAcademyData';
 import { soundFX, triggerCelebrationConfetti } from '../utils/soundEffects';
@@ -37,6 +38,12 @@ interface AcademyStoreState {
   scannedHotspots: string[];
   completedStories: string[];
   completedGuides: string[];
+  // Persisted answer logs: they stop XP from being farmed by re-answering
+  answeredChoices: string[];
+  answeredQuizKeys: string[];
+  answeredTriviaKeys: string[];
+  hasSeenTour: boolean;
+  firstLight: 'unseen' | 'in-progress' | 'complete';
   isWalkthroughOpen: boolean;
   walkthroughStepIndex: number;
   isGlossaryOpen: boolean;
@@ -45,163 +52,259 @@ interface AcademyStoreState {
 
   // Actions
   setCadetName: (name: string) => void;
+  setFirstLight: (status: 'unseen' | 'in-progress' | 'complete') => void;
   setActiveTab: (tab: AcademyTab) => void;
   addXp: (amount: number, reason?: string) => void;
   unlockBadge: (badgeId: string) => void;
-  markPlanetInspected: (planetId: string) => void;
+  markPlanetInspected: (planetId: string, planetName?: string) => void;
   markHotspotScanned: (hotspotId: string) => void;
   markStoryCompleted: (storyId: string, badgeId: string) => void;
   markGuideCompleted: (guideId: string, badgeId: string) => void;
+  /** Returns true the first time a story choice is answered (and awards XP). */
+  recordChoice: (choiceKey: string, xp: number, reason: string) => boolean;
+  /** Returns true the first time a quiz question is answered correctly. */
+  recordQuizCorrect: (quizKey: string, xp: number, reason: string) => boolean;
+  /** Returns true the first time a trivia question is answered correctly. */
+  recordTriviaCorrect: (triviaKey: string, xp: number, reason: string) => boolean;
   openWalkthrough: (stepIndex?: number) => void;
   closeWalkthrough: () => void;
+  completeWalkthrough: () => void;
   nextWalkthroughStep: (totalSteps: number) => void;
   prevWalkthroughStep: () => void;
   setGlossaryOpen: (open: boolean) => void;
   setProfileModalOpen: (open: boolean) => void;
   clearToast: () => void;
+  resetProgress: () => void;
 }
 
-export const useAcademyStore = create<AcademyStoreState>((set, get) => ({
+const INITIAL_PROGRESS = {
   cadetName: 'Cadet Explorer',
-  activeTab: 'explorer',
   xp: 50,
-  unlockedBadges: [],
+  unlockedBadges: [] as string[],
   inspectedPlanets: ['earth'],
-  scannedHotspots: [],
-  completedStories: [],
-  completedGuides: [],
-  isWalkthroughOpen: false,
-  walkthroughStepIndex: 0,
-  isGlossaryOpen: false,
-  isProfileModalOpen: false,
-  recentToast: null,
+  scannedHotspots: [] as string[],
+  completedStories: [] as string[],
+  completedGuides: [] as string[],
+  answeredChoices: [] as string[],
+  answeredQuizKeys: [] as string[],
+  answeredTriviaKeys: [] as string[],
+  hasSeenTour: false,
+  firstLight: 'unseen' as const,
+};
 
-  setCadetName: (name: string) => set({ cadetName: name }),
+export const useAcademyStore = create<AcademyStoreState>()(
+  persist(
+    (set, get) => ({
+      ...INITIAL_PROGRESS,
+      activeTab: 'explorer',
+      isWalkthroughOpen: false,
+      walkthroughStepIndex: 0,
+      isGlossaryOpen: false,
+      isProfileModalOpen: false,
+      recentToast: null,
 
-  setActiveTab: (tab: AcademyTab) => {
-    soundFX.playClick();
-    set({ activeTab: tab });
-  },
+      setCadetName: (name: string) => set({ cadetName: name }),
 
-  addXp: (amount: number, reason?: string) => {
-    set((state) => ({
-      xp: state.xp + amount,
-      recentToast: reason
-        ? {
-            title: `+${amount} Space XP Earned!`,
-            subtitle: reason,
-            icon: '✨',
-          }
-        : state.recentToast,
-    }));
-  },
+      setFirstLight: (status) => set({ firstLight: status }),
 
-  unlockBadge: (badgeId: string) => {
-    const state = get();
-    if (state.unlockedBadges.includes(badgeId)) return;
-
-    const badge = ACADEMY_BADGES.find((b) => b.id === badgeId);
-    if (!badge) return;
-
-    soundFX.playSuccessChime();
-    triggerCelebrationConfetti();
-
-    set({
-      unlockedBadges: [...state.unlockedBadges, badgeId],
-      xp: state.xp + badge.xpValue,
-      recentToast: {
-        title: `Badge Unlocked: ${badge.title}`,
-        subtitle: `+${badge.xpValue} XP // ${badge.description}`,
-        icon: badge.icon,
+      setActiveTab: (tab: AcademyTab) => {
+        soundFX.playClick();
+        set({ activeTab: tab });
       },
-    });
-  },
 
-  markPlanetInspected: (planetId: string) => {
-    const state = get();
-    if (state.inspectedPlanets.includes(planetId)) return;
-    const updated = [...state.inspectedPlanets, planetId];
-    set({ inspectedPlanets: updated, xp: state.xp + 20 });
-
-    if (updated.length >= 3) {
-      get().unlockBadge('badge-planetary-scout');
-    }
-  },
-
-  markHotspotScanned: (hotspotId: string) => {
-    const state = get();
-    if (state.scannedHotspots.includes(hotspotId)) return;
-    soundFX.playScanPing();
-    const updated = [...state.scannedHotspots, hotspotId];
-    set({
-      scannedHotspots: updated,
-      xp: state.xp + 30,
-      recentToast: {
-        title: '+30 XP // Subsystem Analyzed',
-        subtitle: 'Spacecraft forensic data added to your logbook.',
-        icon: '🔍',
+      addXp: (amount: number, reason?: string) => {
+        set((state) => ({
+          xp: state.xp + amount,
+          recentToast: reason
+            ? {
+                title: `+${amount} Space XP Earned!`,
+                subtitle: reason,
+                icon: '✨',
+              }
+            : state.recentToast,
+        }));
       },
-    });
 
-    if (updated.length >= 3) {
-      get().unlockBadge('badge-spacecraft-engineer');
+      unlockBadge: (badgeId: string) => {
+        const state = get();
+        if (state.unlockedBadges.includes(badgeId)) return;
+
+        const badge = ACADEMY_BADGES.find((b) => b.id === badgeId);
+        if (!badge) return;
+
+        soundFX.playSuccessChime();
+        triggerCelebrationConfetti();
+
+        set({
+          unlockedBadges: [...state.unlockedBadges, badgeId],
+          xp: state.xp + badge.xpValue,
+          recentToast: {
+            title: `Badge Unlocked: ${badge.title}`,
+            subtitle: `+${badge.xpValue} XP // ${badge.description}`,
+            icon: badge.icon,
+          },
+        });
+      },
+
+      markPlanetInspected: (planetId: string, planetName?: string) => {
+        const state = get();
+        if (state.inspectedPlanets.includes(planetId)) return;
+        const updated = [...state.inspectedPlanets, planetId];
+        set({
+          inspectedPlanets: updated,
+          xp: state.xp + 20,
+          recentToast: {
+            title: '+20 Space XP // World Surveyed',
+            subtitle: planetName ? `${planetName} added to your logbook.` : 'Added to your logbook.',
+            icon: '🪐',
+          },
+        });
+
+        if (updated.length >= 3) {
+          get().unlockBadge('badge-planetary-scout');
+        }
+      },
+
+      markHotspotScanned: (hotspotId: string) => {
+        const state = get();
+        if (state.scannedHotspots.includes(hotspotId)) return;
+        soundFX.playScanPing();
+        const updated = [...state.scannedHotspots, hotspotId];
+        set({
+          scannedHotspots: updated,
+          xp: state.xp + 30,
+          recentToast: {
+            title: '+30 XP // Subsystem Analyzed',
+            subtitle: 'Spacecraft forensic data added to your logbook.',
+            icon: '🔍',
+          },
+        });
+
+        if (updated.length >= 3) {
+          get().unlockBadge('badge-spacecraft-engineer');
+        }
+      },
+
+      markStoryCompleted: (storyId: string, badgeId: string) => {
+        const state = get();
+        if (!state.completedStories.includes(storyId)) {
+          set({ completedStories: [...state.completedStories, storyId] });
+        }
+        get().unlockBadge(badgeId);
+      },
+
+      markGuideCompleted: (guideId: string, badgeId: string) => {
+        const state = get();
+        if (!state.completedGuides.includes(guideId)) {
+          set({ completedGuides: [...state.completedGuides, guideId] });
+        }
+        get().unlockBadge(badgeId);
+      },
+
+      recordChoice: (choiceKey, xp, reason) => {
+        const state = get();
+        if (state.answeredChoices.includes(choiceKey)) return false;
+        set({
+          answeredChoices: [...state.answeredChoices, choiceKey],
+          xp: state.xp + xp,
+          recentToast: { title: `+${xp} Space XP Earned!`, subtitle: reason, icon: '✨' },
+        });
+        return true;
+      },
+
+      recordQuizCorrect: (quizKey, xp, reason) => {
+        const state = get();
+        if (state.answeredQuizKeys.includes(quizKey)) return false;
+        set({
+          answeredQuizKeys: [...state.answeredQuizKeys, quizKey],
+          xp: state.xp + xp,
+          recentToast: { title: `+${xp} Space XP Earned!`, subtitle: reason, icon: '✨' },
+        });
+        return true;
+      },
+
+      recordTriviaCorrect: (triviaKey, xp, reason) => {
+        const state = get();
+        if (state.answeredTriviaKeys.includes(triviaKey)) return false;
+        set({
+          answeredTriviaKeys: [...state.answeredTriviaKeys, triviaKey],
+          xp: state.xp + xp,
+          recentToast: { title: `+${xp} Space XP Earned!`, subtitle: reason, icon: '✨' },
+        });
+        return true;
+      },
+
+      openWalkthrough: (stepIndex = 0) => {
+        soundFX.playClick();
+        set({ isWalkthroughOpen: true, walkthroughStepIndex: stepIndex });
+      },
+
+      // Dismissing the tour is not the same as finishing it: no badge for skipping.
+      closeWalkthrough: () => {
+        soundFX.playClick();
+        set({ isWalkthroughOpen: false, hasSeenTour: true });
+      },
+
+      completeWalkthrough: () => {
+        soundFX.playClick();
+        set({ isWalkthroughOpen: false, hasSeenTour: true });
+        get().unlockBadge('badge-orientation');
+      },
+
+      nextWalkthroughStep: (totalSteps: number) => {
+        soundFX.playClick();
+        const current = get().walkthroughStepIndex;
+        if (current + 1 >= totalSteps) {
+          get().completeWalkthrough();
+        } else {
+          set({ walkthroughStepIndex: current + 1 });
+        }
+      },
+
+      prevWalkthroughStep: () => {
+        soundFX.playClick();
+        const current = get().walkthroughStepIndex;
+        if (current > 0) {
+          set({ walkthroughStepIndex: current - 1 });
+        }
+      },
+
+      setGlossaryOpen: (open: boolean) => {
+        soundFX.playClick();
+        set({ isGlossaryOpen: open });
+      },
+
+      setProfileModalOpen: (open: boolean) => {
+        soundFX.playClick();
+        set({ isProfileModalOpen: open });
+      },
+
+      clearToast: () => set({ recentToast: null }),
+
+      resetProgress: () => {
+        set({
+          ...INITIAL_PROGRESS,
+          hasSeenTour: true,
+          recentToast: { title: 'Fresh start', subtitle: 'Cadet progress reset.', icon: '🌱' },
+        });
+      },
+    }),
+    {
+      name: 'cosmosis-academy-v1',
+      partialize: (state) => ({
+        cadetName: state.cadetName,
+        xp: state.xp,
+        unlockedBadges: state.unlockedBadges,
+        inspectedPlanets: state.inspectedPlanets,
+        scannedHotspots: state.scannedHotspots,
+        completedStories: state.completedStories,
+        completedGuides: state.completedGuides,
+        answeredChoices: state.answeredChoices,
+        answeredQuizKeys: state.answeredQuizKeys,
+        answeredTriviaKeys: state.answeredTriviaKeys,
+        hasSeenTour: state.hasSeenTour,
+        firstLight: state.firstLight,
+      }),
     }
-  },
-
-  markStoryCompleted: (storyId: string, badgeId: string) => {
-    const state = get();
-    if (!state.completedStories.includes(storyId)) {
-      set({ completedStories: [...state.completedStories, storyId] });
-    }
-    get().unlockBadge(badgeId);
-  },
-
-  markGuideCompleted: (guideId: string, badgeId: string) => {
-    const state = get();
-    if (!state.completedGuides.includes(guideId)) {
-      set({ completedGuides: [...state.completedGuides, guideId] });
-    }
-    get().unlockBadge(badgeId);
-  },
-
-  openWalkthrough: (stepIndex = 0) => {
-    soundFX.playClick();
-    set({ isWalkthroughOpen: true, walkthroughStepIndex: stepIndex });
-  },
-
-  closeWalkthrough: () => {
-    soundFX.playClick();
-    set({ isWalkthroughOpen: false });
-    get().unlockBadge('badge-orientation');
-  },
-
-  nextWalkthroughStep: (totalSteps: number) => {
-    soundFX.playClick();
-    const current = get().walkthroughStepIndex;
-    if (current + 1 >= totalSteps) {
-      get().closeWalkthrough();
-    } else {
-      set({ walkthroughStepIndex: current + 1 });
-    }
-  },
-
-  prevWalkthroughStep: () => {
-    soundFX.playClick();
-    const current = get().walkthroughStepIndex;
-    if (current > 0) {
-      set({ walkthroughStepIndex: current - 1 });
-    }
-  },
-
-  setGlossaryOpen: (open: boolean) => {
-    soundFX.playClick();
-    set({ isGlossaryOpen: open });
-  },
-
-  setProfileModalOpen: (open: boolean) => {
-    soundFX.playClick();
-    set({ isProfileModalOpen: open });
-  },
-
-  clearToast: () => set({ recentToast: null }),
-}));
+  )
+);
