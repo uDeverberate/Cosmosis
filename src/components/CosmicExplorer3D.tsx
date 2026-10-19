@@ -552,9 +552,9 @@ const AsteroidBelt3D: React.FC<{ timeSpeed: number }> = ({ timeSpeed }) => {
         const rad = 9.85 + ((i * 7) % 5 - 2) * 0.22;
         const yPos = ((i * 11) % 5 - 2) * 0.11;
         const urls = [
-          '/models/asteroid.glb',
-          '/models/asteroid-2.glb',
-          '/models/asteroid_with_minerals.glb',
+          '/models/asteroid.glb?v=3',
+          '/models/asteroid-2.glb?v=3',
+          '/models/asteroid_with_minerals.glb?v=3',
         ];
         return (
           <FeaturedGLBAsteroid
@@ -1331,34 +1331,34 @@ const Spacecraft3DModel: React.FC<Spacecraft3DSceneProps> = ({
 // ============================================================================
 
 export const PLANET_GLB_MAP: Record<string, string> = {
-  sun: '/models/sun_model.glb',
-  mercury: '/models/mercury_planet.glb',
-  venus: '/models/venus_v1.1.glb',
-  earth: '/models/earth.glb',
-  moon: '/models/moon.glb',
-  mars: '/models/mars.glb',
-  jupiter: '/models/jupiter.glb',
-  saturn: '/models/saturn.glb',
-  uranus: '/models/realistic_uranus_4k.glb',
-  neptune: '/models/neptune_v2.glb',
-  ceres: '/models/asteroid_with_minerals.glb',
+  sun: '/models/sun_model.glb?v=3',
+  mercury: '/models/mercury_planet.glb?v=3',
+  venus: '/models/venus_v1.1.glb?v=3',
+  earth: '/models/earth.glb?v=3',
+  moon: '/models/moon.glb?v=3',
+  mars: '/models/mars.glb?v=3',
+  jupiter: '/models/jupiter.glb?v=3',
+  saturn: '/models/saturn.glb?v=3',
+  uranus: '/models/realistic_uranus_4k.glb?v=3',
+  neptune: '/models/neptune_v2.glb?v=3',
+  ceres: '/models/asteroid_with_minerals.glb?v=3',
 };
 
 export const SPACECRAFT_GLB_MAP: Record<string, string> = {
-  apollo: '/models/apollo_lunar_module.glb',
-  rover: '/models/perseverance_mars_rover.glb',
-  voyager: '/models/voyager-1.glb',
-  jwst: '/models/jwst_james_webb_space_telescope.glb',
-  iss: '/models/iss-_international_space_station.glb',
-  hubble: '/models/cassini_huygens.glb',
-  cassini: '/models/cassini_huygens.glb',
-  xwing: '/models/x-wing_hanger_diorama.glb',
+  apollo: '/models/apollo_lunar_module.glb?v=3',
+  rover: '/models/perseverance_mars_rover.glb?v=3',
+  voyager: '/models/voyager-1.glb?v=3',
+  jwst: '/models/jwst_james_webb_space_telescope.glb?v=3',
+  iss: '/models/iss-_international_space_station.glb?v=3',
+  hubble: '/models/cassini_huygens.glb?v=3',
+  cassini: '/models/cassini_huygens.glb?v=3',
+  xwing: '/models/x-wing_hanger_diorama.glb?v=3',
 };
 
 export const ASTEROID_GLB_MODELS = [
-  '/models/asteroid.glb',
-  '/models/asteroid-2.glb',
-  '/models/asteroid_with_minerals.glb',
+  '/models/asteroid.glb?v=3',
+  '/models/asteroid-2.glb?v=3',
+  '/models/asteroid_with_minerals.glb?v=3',
 ];
 
 // --- Resilient Error Boundary for 3D GLB Models ---
@@ -1386,7 +1386,7 @@ class GLBErrorBoundary extends Component<
 
 // --- Orbiting Moon GLB Component ---
 const MoonGLBMesh: React.FC<{ radius: number }> = ({ radius }) => {
-  const { scene } = useGLTF('/models/moon.glb');
+  const { scene } = useGLTF('/models/moon.glb?v=3');
   const normalizedMoon = useMemo(() => {
     const clone = scene.clone(true);
     const box = new THREE.Box3().setFromObject(clone);
@@ -1403,6 +1403,15 @@ const MoonGLBMesh: React.FC<{ radius: number }> = ({ radius }) => {
         const mesh = child as THREE.Mesh;
         mesh.castShadow = true;
         mesh.receiveShadow = true;
+        const stdMat = mesh.material as THREE.MeshStandardMaterial;
+        if (stdMat && stdMat.map) {
+          stdMat.map.anisotropy = 8;
+          stdMat.map.colorSpace = THREE.SRGBColorSpace;
+          stdMat.bumpMap = stdMat.map;
+          stdMat.bumpScale = 0.055;
+          stdMat.roughness = 0.92;
+          stdMat.needsUpdate = true;
+        }
       }
     });
 
@@ -1516,10 +1525,31 @@ const PlanetGLBInner: React.FC<PlanetGLBProps> = ({
             if (stdMat.map) {
               stdMat.map.anisotropy = 8;
               stdMat.map.colorSpace = THREE.SRGBColorSpace;
+              // Add high-contrast 3D relief bump mapping from the 4K/8K NASA satellite texture
+              // when the GLB only includes a diffuse texture (Earth, Moon, Mars, Venus, Saturn)
+              if (!isRing && !stdMat.normalMap && !stdMat.bumpMap && planet.id !== 'sun') {
+                stdMat.bumpMap = stdMat.map;
+                stdMat.bumpScale =
+                  planet.id === 'mars' || planet.id === 'moon'
+                    ? 0.055
+                    : planet.id === 'earth'
+                    ? 0.04
+                    : 0.02;
+              }
+              if (planet.id === 'earth' && !isRing && earthExtraTextures?.specularMap) {
+                stdMat.roughnessMap = earthExtraTextures.specularMap;
+                stdMat.roughness = 0.72;
+                stdMat.metalness = 0.08;
+              }
             }
             if (isRing) {
               stdMat.transparent = true;
               stdMat.depthWrite = false;
+              // saturn.glb's ring texture is a JPG with black background; use luminance as alphaMap!
+              if (planet.id === 'saturn' && stdMat.map) {
+                stdMat.alphaMap = stdMat.map;
+                stdMat.opacity = 0.95;
+              }
             }
             m.needsUpdate = true;
           };
@@ -1549,7 +1579,7 @@ const PlanetGLBInner: React.FC<PlanetGLBProps> = ({
     const wrapper = new THREE.Group();
     wrapper.add(clone);
     return wrapper;
-  }, [scene, radius, planet.id]);
+  }, [scene, radius, planet.id, earthExtraTextures]);
 
   const tilt = useMemo(() => {
     switch (planet.id) {
