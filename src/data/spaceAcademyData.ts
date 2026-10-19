@@ -918,6 +918,183 @@ export const SOLAR_SYSTEM_PLANETS: PlanetData[] = [
       },
     ],
   },
+  {
+    id: 'moon',
+    name: 'The Moon (Luna)',
+    subtitle: 'Earth’s Natural Satellite & Artemis Outpost',
+    category: 'Dwarf Planet / Moon',
+    color: '#cbd5e1',
+    accentColor: '#f1f5f9',
+    radiusScale: 0.65,
+    orbitRadius: 0,
+    orbitSpeed: 0,
+    gravityRatio: 0.166,
+    distanceFromSun: '149.6 Million km (384,400 km from Earth)',
+    dayLength: '27.3 Earth days (Tidally Locked to Earth)',
+    yearLength: '27.3 Earth days (Lunar Synodic Month: 29.5 days)',
+    avgTemp: '-130°C to +120°C (Night vs Day)',
+    moonsCount: 0,
+    escapeVelocity: '2.38 km/s',
+    orbitalSpeed: '1.02 km/s (around Earth)',
+    axialTilt: '1.54°',
+    lightTimeFromSun: '8 min 20 sec (1.3 sec to Earth)',
+    atmosphereComposition: [
+      { gas: 'Helium, Neon & Hydrogen (Tenuous Exosphere)', percent: 100, color: '#94a3b8' },
+    ],
+    internalLayers: [
+      { layer: 'Anorthositic Regolith & Crust (0–60 km)', detail: 'Pulverized silica glass, titanium-rich basalt, and deep impact craters from billions of years of asteroid strikes.' },
+      { layer: 'Rigid Lithospheric Mantle (60–1,000 km)', detail: 'Dense olivine and pyroxene mantle hosting deep tidal moonquakes caused by Earth’s gravitational tug.' },
+      { layer: 'Partially Molten Boundary & Metallic Iron Core (<350 km)', detail: 'Small metallic iron-nickel core making up only ~1–2% of the Moon’s total mass.' },
+    ],
+    deepDiveHistory:
+      'Born 4.5 billion years ago when a Mars-sized protoplanet named Theia slammed into proto-Earth. The vaporized crust and mantle debris coalesced into the Moon in only a few months! Today, NASA Artemis and international missions are returning humans to establish permanent research bases at the lunar South Pole.',
+    kidFriendlyAnalogy:
+      'If Earth were the size of a basketball, the Moon would be the size of a tennis ball about 30 basketballs away—and you can jump 6 times higher on it!',
+    beginnerSummary:
+      'The Moon is Earth’s constant cosmic companion. Its gravity pulls our ocean tides, stabilizes Earth’s wobble so our seasons stay predictable, and always shows us the exact same face because it is tidally locked.',
+    funFacts: [
+      'Footprints left by the 12 Apollo astronauts will last at least 100 million years because the Moon has zero wind, rain, or flowing water to erase them!',
+      'The Moon is slowly spiraling away from Earth at 3.8 centimeters per year—about the exact speed your fingernails grow!',
+      'Deep permanently shadowed craters at the lunar South Pole (like Shackleton) contain hundreds of millions of tons of ancient water ice frozen at -246°C!',
+      'Apollo astronauts discovered that the lunar regolith dust smells strongly like spent gunpowder and clung electrostatically to spacesuits and helmets!',
+      'Because the Moon has no atmosphere to scatter sunlight into blue sky, daytime shadows on the Moon are jet black and stars are visible in full daylight!',
+      'The Moon "rings like a bell" for over an hour when hit by discarded Apollo rocket stages because its dry rocky interior lacks water to damp seismic shockwaves!',
+      'Earth’s gravity raises a tidal bulge in the Moon, and the Moon raises tidal bulges in Earth’s oceans, gradually lengthening our day by 1.7 milliseconds per century.',
+      'A 50 kg student would weigh only 8.3 kg on the Moon—you could easily carry your refrigerator or jump over a fence with full spacesuit gear!',
+    ],
+    activeMissions: ['NASA Artemis Program', 'LRO (Lunar Reconnaissance Orbiter)', 'ISRO Chandrayaan-3', 'JAXA SLIM', 'CNSA Chang\'e 6'],
+    quizQuestions: [
+      {
+        question: 'Why do we on Earth always see the exact same side ("The Near Side") of the Moon?',
+        options: [
+          'Because the Moon takes the exact same amount of time to rotate once on its axis as it does to orbit Earth ("Tidal Locking")',
+          'Because the far side of the Moon is permanently covered in dark paint',
+          'Because the Moon does not spin at all',
+          'Because Earth’s magnetic field holds it frozen in place',
+        ],
+        correctIndex: 0,
+        explanation:
+          'Tidal friction over billions of years synchronized the Moon’s spin with its orbital period (27.3 days), locking one face toward Earth forever!',
+      },
+      {
+        question: 'Roughly how strong is the Moon’s gravity compared to Earth’s gravity?',
+        options: ['Equal to Earth', 'About 1/6th of Earth gravity (0.166g)', 'Twice as strong', 'Zero gravity'],
+        correctIndex: 1,
+        explanation:
+          'Because the Moon is smaller and less dense, its surface gravity is about 1/6th of Earth’s—meaning a 60 kg person weighs just 10 kg on the Moon!',
+      },
+      {
+        question: 'What crucial resource has been confirmed in deep permanently shadowed craters at the Moon’s South Pole?',
+        options: ['Liquid petroleum', 'Millions of tons of frozen water ice', 'Pure gold nuggets', 'Natural diamonds'],
+        correctIndex: 1,
+        explanation:
+          'Craters whose floors never see sunlight act as cold traps preserving water ice that Artemis astronauts can melt into drinking water and split into rocket propellant (O₂ and H₂)!',
+      },
+      {
+        question: 'How did the Moon originally form roughly 4.5 billion years ago according to the leading Giant Impact Hypothesis?',
+        options: [
+          'A Mars-sized protoplanet named Theia collided with the early molten Earth, and the blasted debris coalesced into the Moon',
+          'Earth captured a wandering rogue star',
+          'The Moon was ejected from the center of the Sun',
+          'An alien megastructure built it in orbit',
+        ],
+        correctIndex: 0,
+        explanation:
+          'Computer simulations and Apollo rock samples confirm that a colossal collision with Theia blasted molten rock into orbit that rapidly accreted into our Moon.',
+      },
+    ],
+  },
+  {
+    id: 'ceres',
+    name: '1 Ceres (Asteroid Belt)',
+    subtitle: 'Dwarf Planet & Water-Rich Queen of the Asteroid Belt',
+    category: 'Dwarf Planet / Moon',
+    color: '#a8a29e',
+    accentColor: '#e7e5e4',
+    radiusScale: 0.62,
+    orbitRadius: 10.2,
+    orbitSpeed: 0.22,
+    gravityRatio: 0.028,
+    distanceFromSun: '414 Million km (2.77 AU)',
+    dayLength: '9.07 Hours',
+    yearLength: '4.6 Earth Years (1,682 Days)',
+    avgTemp: '-105°C (Day) to -143°C (Night)',
+    moonsCount: 0,
+    escapeVelocity: '0.51 km/s (1,850 km/h)',
+    orbitalSpeed: '17.9 km/s',
+    axialTilt: '4.0°',
+    lightTimeFromSun: '23 Minutes',
+    atmosphereComposition: [
+      { gas: 'Transient Water Vapor Plumes (Sublimated Cryovolcanic Brine)', percent: 100, color: '#38bdf8' },
+    ],
+    internalLayers: [
+      { layer: 'Dark Regolith & Carbonaceous Chondrite Crust', detail: 'Silicate clay crust studded with glowing sodium carbonate salt deposits (Cerealia Facula).' },
+      { layer: 'Hydrated Mud & Salty Brine Mantle (Up to 100 km deep)', detail: 'Contains up to 25% water by mass—more fresh water than all lakes and rivers on Earth combined!' },
+      { layer: 'Dense Differentiated Silicate Rocky Core', detail: 'Partially differentiated rocky interior with relic radioactive core heat.' },
+    ],
+    deepDiveHistory:
+      'Discovered on New Year’s Day 1801 by Giuseppe Piazzi, Ceres was originally hailed as the 8th planet, then deemed an asteroid for 150 years, and officially classified as a Dwarf Planet by the IAU in 2006. It contains roughly one-third of the total mass of the entire Asteroid Belt!',
+    kidFriendlyAnalogy:
+      'Ceres is about the size of Texas—a colossal, cratered cosmic ice ball cruising peacefully among millions of jagged asteroid rocks between Mars and Jupiter!',
+    beginnerSummary:
+      'Ceres is the largest world between Mars and Jupiter and the only dwarf planet located inside Neptune’s orbit. NASA’s Dawn orbiter revealed that Ceres is not just a dead rock, but a brine-rich ocean world with active salt cryovolcanoes like Ahuna Mons!',
+    funFacts: [
+      'Ceres holds roughly one-third of the entire mass of the Main Asteroid Belt—making it the undisputed giant of the asteroid zone!',
+      'Inside Occator Crater, bright glowing spots called Cerealia Facula are made of sodium carbonate salts left behind when subsurface salty brine erupted and evaporated in space!',
+      'Ahuna Mons is a 4-kilometer-tall cryovolcano (ice volcano) that erupted cold mud and salty brine instead of molten magma rock!',
+      'Ceres contains more fresh water ice locked in its mantle than all of Earth’s freshwater rivers and lakes combined!',
+      'Because Ceres’s surface gravity is so feeble (0.028g), a 50 kg student would weigh only 1.4 kg—you could jump 18 meters into the air and throw a baseball into orbit!',
+      'NASA’s Dawn probe orbited Ceres from 2015 to 2018 and is now parked in an eternal, stable "graveyard" orbit where it will remain for decades without crashing.',
+      'Ceres has almost zero axial tilt (only 4°), meaning its polar craters remain in permanent darkness and act as cold traps for water ice.',
+      'Dawn’s infrared spectrometer detected complex aliphatic organic molecules (carbon chains) on Ceres, proving it possesses the chemical building blocks of life.',
+    ],
+    activeMissions: ['NASA Dawn Mission (Historic Archive / Graveyard Orbit)'],
+    quizQuestions: [
+      {
+        question: 'Where in the Solar System is the dwarf planet 1 Ceres located?',
+        options: [
+          'In the Main Asteroid Belt between Mars and Jupiter',
+          'Beyond Pluto in the Kuiper Belt',
+          'Between Mercury and the Sun',
+          'In orbit around Neptune',
+        ],
+        correctIndex: 0,
+        explanation:
+          'Ceres orbits at 2.77 AU, right in the heart of the Main Asteroid Belt, making it the only dwarf planet in the inner Solar System!',
+      },
+      {
+        question: 'What are the bright, glowing white spots inside Ceres’s Occator Crater made of?',
+        options: [
+          'Sodium carbonate salts and ammonium chloride left behind by evaporated subsurface brine',
+          'Crushed diamond dust from a comet',
+          'Alien solar panels',
+          'Phosphorescent algae',
+        ],
+        correctIndex: 0,
+        explanation:
+          'NASA’s Dawn probe discovered that subsurface salty water welled up through impact fractures and flash-evaporated in the vacuum of space, leaving behind bright reflective salts!',
+      },
+      {
+        question: 'What makes Ahuna Mons on Ceres one of the most unique mountains in the Solar System?',
+        options: [
+          'It is a 4-km-tall "Cryovolcano" that erupted ice and salty mud slurry rather than molten lava rock',
+          'It is made of pure solid iron',
+          'It moves around the planet every week',
+          'It is taller than Olympus Mons on Mars',
+        ],
+        correctIndex: 0,
+        explanation:
+          'Ahuna Mons is an ice volcano created when underground pressurized brine and clay mud domed upward and froze into a 4,000-meter peak!',
+      },
+      {
+        question: 'Roughly how much of the total mass of the entire Asteroid Belt is contained in Ceres alone?',
+        options: ['About 1%', 'About 33% (One-third of all asteroid mass!)', '99%', '5%'],
+        correctIndex: 1,
+        explanation:
+          'Even though the asteroid belt contains millions of rocks, Ceres is so massive that it accounts for roughly 33% (one-third) of the belt’s entire mass!',
+      },
+    ],
+  },
 ];
 
 export const SPACECRAFT_FLEET: SpacecraftData[] = [
@@ -1236,6 +1413,105 @@ export const SPACECRAFT_FLEET: SpacecraftData[] = [
         technicalFact:
           'Four 45-kg reaction wheels spinning up to 3,000 RPM paired with interferometric Fine Guidance Sensors.',
         position: [-0.95, -0.1, 0],
+      },
+    ],
+  },
+  {
+    id: 'cassini',
+    name: 'Cassini-Huygens Saturn Orbiter & Titan Lander',
+    year: '1997 – 2017',
+    destination: 'Saturn, Rings & Ocean Moons (Titan & Enceladus)',
+    status: 'Mission Complete // Grand Finale Atmospheric Disposal (Sept 15, 2017)',
+    badgeEmoji: '🪐',
+    launchVehicle: 'Titan IVB / Centaur Upper Stage',
+    mass: '5,712 kg (Size of a 30-passenger bus)',
+    powerSystem: '3 Radioisotope Thermoelectric Generators (GPHS-RTGs, 885 Watts)',
+    maxSpeed: '122,000 km/h (During Grand Finale ring dives)',
+    summary:
+      'A flagship international mission by NASA, ESA, and ASI that spent 13 years orbiting Saturn, discovering hydrothermal geysers on Enceladus, landing the Huygens probe on methane-soaked Titan, and executing 22 daring dives between Saturn and its innermost rings.',
+    whyItMatters:
+      'Discovered that Enceladus has a global subsurface ocean with organic chemistry, and delivered humanity’s first surface images and audio recordings from the surface of Titan (the only moon with a dense atmosphere and liquid seas).',
+    funFacts: [
+      'On January 14, 2005, the ESA Huygens probe parachuted down through Titan’s thick nitrogen smog and landed safely on a riverbed of water-ice pebbles!',
+      'Cassini flew straight through the icy geyser plumes blasting from Enceladus’s south pole, tasting water, salts, methane, and complex organic molecules with its spectrometers!',
+      'During its "Grand Finale" in 2017, Cassini dove 22 times through the 2,000-km gap between Saturn and its rings at 122,000 km/h using its high-gain dish as an ice shield!',
+      'To protect Titan and Enceladus from any Earth bacteria, Cassini intentionally plunged into Saturn’s crushing atmosphere on September 15, 2017, transmitting science data until its thrusters could no longer fight the wind.',
+    ],
+    hotspots: [
+      {
+        id: 'cassini-dish',
+        name: '4-Meter High-Gain Radio Dish & Particle Shield',
+        role: 'Deep Space Communications & Whipple Shield',
+        plainEnglish:
+          'Used as both an ultra-powerful radio transmitter to Earth and as a physical umbrella against ring ice grains during ring crossings.',
+        technicalFact: 'High-gain Cassegrain reflector operating at X-band and Ka-band frequencies.',
+        position: [0, 1.25, 0],
+      },
+      {
+        id: 'cassini-probe',
+        name: 'ESA Huygens Titan Atmospheric Probe',
+        role: 'Historic Titan Parachute Lander',
+        plainEnglish:
+          'A 318-kg flying saucer with a heat shield that decoupled from Cassini to land on Saturn’s giant moon Titan.',
+        technicalFact: 'Equipped with heat shield, 3 parachutes, descent imager, and surface science sensors.',
+        position: [0.95, -0.2, 0],
+      },
+      {
+        id: 'cassini-rtg',
+        name: 'Plutonium-238 Radioisotope Generators (RTGs)',
+        role: 'Deep-Space Nuclear Thermocouples',
+        plainEnglish:
+          'Because sunlight at Saturn is 100 times dimmer than on Earth, solar panels would be too heavy. Cassini used the gentle decay heat of plutonium to generate electricity.',
+        technicalFact: 'Three GPHS-RTGs containing 32.7 kg of Plutonium-238 dioxide generating 885 watts of electrical power.',
+        position: [-0.95, -0.35, 0],
+      },
+    ],
+  },
+  {
+    id: 'xwing',
+    name: 'Incom T-65B X-Wing Starfighter (Hangar Diorama)',
+    year: 'Galactic Civil War Era',
+    destination: 'Rebel Alliance Fleet Hangar & Outer Rim',
+    status: 'Operational // Flight-Ready on Staging Gantry',
+    badgeEmoji: '⭐',
+    launchVehicle: 'Quad Incom 4L4 Fusial Thrust Engines',
+    mass: '10,000 kg (Empty Hull Weight)',
+    powerSystem: 'Cryogenic Power Cell & Novaldex Generator',
+    maxSpeed: '1,050 km/h (Atmosphere) // Class 1.0 Hyperdrive',
+    summary:
+      'The legendary Rebel Alliance space-superiority starfighter renowned for its balanced speed, shielding, hyperdrive mobility, and quad Taim & Bak KX9 laser cannons.',
+    whyItMatters:
+      'Showcases aerospace concepts in sci-fi: S-foil thermal radiators, variable geometry wings, closed-loop life support, and autonomous astromech navigation.',
+    funFacts: [
+      'The "S-foils" (Split-Wings) open into an "X" configuration during combat to widen the firing arc of the laser cannons and shed engine heat through thermal radiators!',
+      'Unlike Imperial TIE Fighters which lack hyperdrives and shields, the T-65 X-wing features full deflector shields and an onboard hyperdrive for hit-and-run strikes.',
+      'An industrial R2 Astromech droid sits in an exposed socket behind the pilot, calculating hyperspace jumps and repairing damaged systems mid-flight!',
+      'The model in this hangar includes full ground crew ladders, fuel transfer lines, power generator containers, and access gantries!',
+    ],
+    hotspots: [
+      {
+        id: 'xwing-cannons',
+        name: 'Quad Taim & Bak KX9 Laser Cannons',
+        role: 'Wingtip Plasma Fire Arc',
+        plainEnglish: 'Mounted on the tip of each S-foil wing to create a converged 4-point firing pattern.',
+        technicalFact: 'High-yield gas plasma lasers capable of single, dual, or quad-burst fire modes.',
+        position: [1.3, 0.4, 0.5],
+      },
+      {
+        id: 'xwing-astromech',
+        name: 'Astromech Droid Socket (R2 Unit)',
+        role: 'Hyperspace Navigation & In-Flight Repairs',
+        plainEnglish: 'Houses the pilot’s droid co-pilot to manage shield angling and plot faster-than-light jumps.',
+        technicalFact: 'Direct interface with the Incom flight computer and sublight engine governors.',
+        position: [0, 0.55, -0.4],
+      },
+      {
+        id: 'xwing-engines',
+        name: 'Quad Incom 4L4 Fusial Thrust Engines',
+        role: 'Sublight Propulsion & Electromagnetic Nozzles',
+        plainEnglish: 'Four high-output fusion engines providing sublight speed and atmospheric flight maneuverability.',
+        technicalFact: 'Thrust vectoring vanes with integrated electromagnetic braking for atmospheric turns.',
+        position: [0, -0.2, -1.2],
       },
     ],
   },

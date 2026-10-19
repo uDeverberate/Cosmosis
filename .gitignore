@@ -22,3 +22,6 @@ dist-ssr
 .DS_Store
 .vscode
 .idea
+
+# Large binary 3D model assets
+public/models/*.glb

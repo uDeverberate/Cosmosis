@@ -59,7 +59,7 @@ export interface SpacecraftHotspot {
 }
 
 export interface SpacecraftData {
-  id: 'apollo' | 'rover' | 'voyager' | 'jwst' | 'iss' | 'hubble';
+  id: 'apollo' | 'rover' | 'voyager' | 'jwst' | 'iss' | 'hubble' | 'cassini' | 'xwing';
   name: string;
   year: string;
   destination: string;

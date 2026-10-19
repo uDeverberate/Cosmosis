@@ -1,12 +1,12 @@
-import React, { useRef, useState, useMemo, useEffect } from 'react';
+import React, { useRef, useState, useMemo, useEffect, Suspense, Component, ReactNode } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { OrbitControls, Stars, Html, Ring, Float, Line } from '@react-three/drei';
+import { OrbitControls, Stars, Html, Ring, Float, Line, useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { SOLAR_SYSTEM_PLANETS, SPACECRAFT_FLEET } from '../data/spaceAcademyData';
 import { PlanetData, SpacecraftData, SpacecraftHotspot } from '../types/academy';
 import { useAcademyStore } from '../store/useAcademyStore';
 import { soundFX } from '../utils/soundEffects';
-import { getPlanetTextures } from '../utils/planetTextures';
+import { getPlanetTextures, getAsteroidRockTextures } from '../utils/planetTextures';
 import { TiltCard3D } from './TiltCard3D';
 import {
   Orbit,
@@ -193,21 +193,103 @@ const PLANET_DEBRIS_DATA: Record<string, PlanetaryDebrisInfo> = {
       { title: 'Deep Space Optical & Radar Tracking', detail: 'Monitoring Kuiper Belt Objects (KBOs) and Centaurs whose orbits cross the giant planets.' },
     ],
   },
+  moon: {
+    trackedDebrisCount: '70+ Landers, Rovers, Crash Sites & Apollo Descent Stages (~190,000 kg)',
+    microFragmentsEstimate: 'Hypervelocity Micrometeorite Regolith Dust',
+    meteoroidFluxPerDay: 'Over 2,800 kg of meteoroid impacts striking the surface every year',
+    avgImpactVelocity: '20 to 72 km/s (Zero atmosphere cushion)',
+    riskLevel: 'NATURAL BOLIDE FLUX',
+    orbitalObjectsSummary:
+      'Humanity has left nearly 200 metric tons of equipment on the Moon, including the historic Apollo 11 descent stage, retroreflectors, crashed orbiters (LCROSS, LADEE, GRAIL), and lunar rovers (Lunokhod, Yutu, Pragyan). With zero atmosphere to brake incoming debris, cosmic sandstorms and meteoroids continuously churn the lunar regolith.',
+    notableEvents: [
+      'In October 2009, NASA’s LCROSS spent Centaur rocket stage was intentionally crashed into Cabeus crater at 9,000 km/h, excavating a plume that confirmed 155 kg of water ice.',
+      'Apollo 11’s Tranquility Base and Apollo 14/15 laser retroreflectors are still fired with lasers from Earth today to measure the Moon’s distance to millimeter precision!',
+    ],
+    mitigationAndDefense: [
+      { title: 'Lunar Heritage Protection & Artemis Accords', detail: 'International agreements designating Apollo and historic robotic landing sites as protected historical heritage parks.' },
+      { title: 'Artemis Subsurface Lava Tube Habitats', detail: 'Using natural lunar basalt lava tubes to shelter future lunar astronauts from micrometeoroid strikes and radiation.' },
+    ],
+  },
+  ceres: {
+    trackedDebrisCount: '1 Inactive Spacecraft (NASA Dawn in Graveyard Orbit)',
+    microFragmentsEstimate: 'Main Belt Asteroidal Dust & Occator Salt Ejecta',
+    meteoroidFluxPerDay: 'High background collision flux in the dense asteroid belt',
+    avgImpactVelocity: '5 to 12 km/s',
+    riskLevel: 'NATURAL BOLIDE FLUX',
+    orbitalObjectsSummary:
+      'Ceres floats in the heart of the Asteroid Belt, where it is subjected to frequent low-velocity asteroid collisions. NASA’s Dawn spacecraft arrived in 2015, explored its bright brine deposits and ice volcanoes, and was placed in a permanent, clean 50+ year stable orbit to protect any potential subsurface biosignatures.',
+    notableEvents: [
+      'Dawn spacecraft ran out of hydrazine fuel in October 2018; NASA steered it into an uncontrolled but stable orbit to comply with strict planetary protection standards.',
+      'Occator Crater’s bright faculae (Cerealia and Vinalia) were formed when a colossal asteroid impact shattered Ceres’s crust, allowing subsurface salty brine to erupt into space.',
+    ],
+    mitigationAndDefense: [
+      { title: 'Planetary Protection Quarantine Orbit', detail: 'Dawn is guaranteed to remain in stable orbit for over 50 years to avoid contaminating Ceres’s water-rich mantle.' },
+    ],
+  },
 };
 
-// --- Procedural Craggy, Pitted Asteroid Geometry with Fractal Noise Displacement ---
+// --- Procedural Craggy, Pitted Asteroid Geometry with Multi-Crater Bowl Displacement ---
 function createCraggyAsteroidGeometry(seed: number): THREE.BufferGeometry {
-  const geo = new THREE.DodecahedronGeometry(1, 1);
+  const geo = new THREE.IcosahedronGeometry(1, 3);
   const pos = geo.attributes.position;
+
+  // Deterministic impact crater centers on the unit sphere for each seed
+  const craters = Array.from({ length: 7 }).map((_, cIdx) => {
+    const a = seed * 1.73 + cIdx * 2.19;
+    const b = seed * 0.91 + cIdx * 1.47;
+    const dir = new THREE.Vector3(
+      Math.sin(a) * Math.cos(b),
+      Math.sin(b),
+      Math.cos(a) * Math.cos(b)
+    ).normalize();
+    return {
+      dir,
+      radius: 0.28 + ((cIdx * 13 + seed) % 5) * 0.08,
+      depth: 0.16 + ((cIdx * 7 + seed) % 4) * 0.04,
+    };
+  });
+
+  // Slight triaxial ellipsoid elongation (like Eros, Bennu, or Itokawa)
+  const stretchX = 1.0 + ((seed * 17) % 5) * 0.09;
+  const stretchY = 0.78 + ((seed * 23) % 4) * 0.06;
+  const stretchZ = 0.88 + ((seed * 31) % 4) * 0.06;
+
   for (let i = 0; i < pos.count; i++) {
     const v = new THREE.Vector3().fromBufferAttribute(pos, i);
-    const len = v.length();
-    // Multi-frequency spherical surface deformation (harmonic crags and crater pits)
-    const n1 = Math.sin(v.x * 3.5 + seed) * Math.cos(v.y * 3.5) * Math.sin(v.z * 3.5);
-    const n2 = Math.sin(v.x * 8 + seed * 2) * Math.cos(v.z * 8) * 0.45;
-    const crater = Math.pow(Math.max(0, Math.sin(v.y * 2.5 + seed)), 3) * -0.25; // Impact depression
-    const disp = 1 + n1 * 0.24 + n2 * 0.12 + crater;
-    v.setLength(len * disp);
+    const dir = v.clone().normalize();
+
+    // Multi-frequency lithic ridges and fracture planes
+    const n1 =
+      Math.sin(dir.x * 3.8 + seed) *
+      Math.cos(dir.y * 3.8 - seed * 0.5) *
+      Math.sin(dir.z * 3.8 + seed * 0.8);
+    const n2 =
+      Math.sin(dir.x * 9.5 + seed * 2.1) *
+      Math.cos(dir.z * 9.5 + seed * 1.3) *
+      Math.cos(dir.y * 8.2);
+    const ridge = 1.0 - Math.abs(Math.sin(dir.x * 6.2 + dir.y * 5.8 - dir.z * 6.4 + seed));
+
+    let craterOffset = 0;
+    for (const c of craters) {
+      const d = dir.distanceTo(c.dir);
+      if (d < c.radius) {
+        const t = d / c.radius;
+        // Parabolic bowl floor with raised ejecta rim at t ~ 0.85..1.0
+        if (t < 0.8) {
+          craterOffset -= (1 - (t / 0.8) * (t / 0.8)) * c.depth;
+        } else {
+          const rimT = (t - 0.8) / 0.2;
+          craterOffset += Math.sin(rimT * Math.PI) * (c.depth * 0.28);
+        }
+      }
+    }
+
+    const disp = 1 + n1 * 0.22 + n2 * 0.07 + ridge * 0.09 + craterOffset;
+    v.set(
+      dir.x * stretchX * disp,
+      dir.y * stretchY * disp,
+      dir.z * stretchZ * disp
+    );
     pos.setXYZ(i, v.x, v.y, v.z);
   }
   geo.computeVertexNormals();
@@ -215,19 +297,178 @@ function createCraggyAsteroidGeometry(seed: number): THREE.BufferGeometry {
 }
 
 // Atmospheric Rayleigh Scattering & Greenhouse haze profiles for planets
-const ATMOSPHERE_PROFILES: Record<string, { color: string; scale: number; opacity: number }> = {
-  earth: { color: '#38bdf8', scale: 1.045, opacity: 0.38 }, // Ethereal nitrogen-oxygen blue
-  venus: { color: '#fbbf24', scale: 1.035, opacity: 0.45 }, // Thick golden sulfuric acid haze
-  mars: { color: '#f97316', scale: 1.025, opacity: 0.26 },  // Thin butterscotch iron dust fringe
-  jupiter: { color: '#fdba74', scale: 1.025, opacity: 0.22 }, // Warm ivory-peach ammonia fringe
-  saturn: { color: '#fde047', scale: 1.022, opacity: 0.2 },  // Soft golden haze
-  uranus: { color: '#22d3ee', scale: 1.035, opacity: 0.35 }, // Vibrant aquamarine methane halo
-  neptune: { color: '#3b82f6', scale: 1.035, opacity: 0.38 }, // Deep cobalt-azure methane glow
+const ATMOSPHERE_PROFILES: Record<
+  string,
+  { color: string; twilightColor: string; scale: number; intensity: number; power: number }
+> = {
+  earth: { color: '#38bdf8', twilightColor: '#0284c7', scale: 1.055, intensity: 1.35, power: 3.2 },
+  venus: { color: '#fbbf24', twilightColor: '#d97706', scale: 1.048, intensity: 1.15, power: 2.8 },
+  mars: { color: '#fb923c', twilightColor: '#c2410c', scale: 1.035, intensity: 0.78, power: 3.6 },
+  jupiter: { color: '#fdba74', twilightColor: '#b45309', scale: 1.035, intensity: 0.65, power: 3.8 },
+  saturn: { color: '#fde047', twilightColor: '#ca8a04', scale: 1.032, intensity: 0.6, power: 3.8 },
+  uranus: { color: '#22d3ee', twilightColor: '#0891b2', scale: 1.048, intensity: 1.05, power: 3.0 },
+  neptune: { color: '#3b82f6', twilightColor: '#1d4ed8', scale: 1.048, intensity: 1.15, power: 3.0 },
+};
+
+// --- Custom GLSL Fresnel Rayleigh Atmospheric Scattering Halo ---
+const AtmosphereFresnelHalo: React.FC<{
+  radius: number;
+  color: string;
+  twilightColor: string;
+  scale: number;
+  intensity: number;
+  power: number;
+}> = ({ radius, color, twilightColor, scale, intensity, power }) => {
+  const uniforms = useMemo(
+    () => ({
+      uColor: { value: new THREE.Color(color) },
+      uTwilightColor: { value: new THREE.Color(twilightColor) },
+      uIntensity: { value: intensity },
+      uPower: { value: power },
+    }),
+    [color, twilightColor, intensity, power]
+  );
+
+  return (
+    <mesh scale={[scale, scale, scale]}>
+      <sphereGeometry args={[radius, 64, 64]} />
+      <shaderMaterial
+        uniforms={uniforms}
+        transparent
+        depthWrite={false}
+        blending={THREE.AdditiveBlending}
+        side={THREE.BackSide}
+        vertexShader={`
+          varying vec3 vNormal;
+          varying vec3 vViewDir;
+          void main() {
+            vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+            vNormal = normalize(normalMatrix * normal);
+            vViewDir = normalize(-mvPosition.xyz);
+            gl_Position = projectionMatrix * mvPosition;
+          }
+        `}
+        fragmentShader={`
+          uniform vec3 uColor;
+          uniform vec3 uTwilightColor;
+          uniform float uIntensity;
+          uniform float uPower;
+          varying vec3 vNormal;
+          varying vec3 vViewDir;
+          void main() {
+            float viewDot = clamp(dot(vNormal, -vViewDir), 0.0, 1.0);
+            float rim = pow(1.0 - viewDot * 0.82, uPower);
+            vec3 col = mix(uTwilightColor, uColor, viewDot);
+            gl_FragColor = vec4(col * uIntensity, rim * 0.72);
+          }
+        `}
+      />
+    </mesh>
+  );
+};
+
+// --- Custom GLSL Boiling Solar Photosphere & Limb-Darkening Shader ---
+const PhotorealisticSunShaderSurface: React.FC<{
+  radius: number;
+  baseMap: THREE.Texture;
+  onClick?: () => void;
+}> = ({ radius, baseMap, onClick }) => {
+  const matRef = useRef<THREE.ShaderMaterial>(null!);
+
+  const uniforms = useMemo(
+    () => ({
+      uTime: { value: 0 },
+      uMap: { value: baseMap },
+    }),
+    [baseMap]
+  );
+
+  useFrame((state) => {
+    if (matRef.current) {
+      matRef.current.uniforms.uTime.value = state.clock.elapsedTime;
+    }
+  });
+
+  return (
+    <mesh
+      onClick={(e) => {
+        if (onClick) {
+          e.stopPropagation();
+          onClick();
+        }
+      }}
+    >
+      <sphereGeometry args={[radius, 64, 64]} />
+      <shaderMaterial
+        ref={matRef}
+        uniforms={uniforms}
+        vertexShader={`
+          varying vec2 vUv;
+          varying vec3 vNormal;
+          varying vec3 vViewDir;
+          varying vec3 vPos;
+          void main() {
+            vUv = uv;
+            vPos = position;
+            vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+            vNormal = normalize(normalMatrix * normal);
+            vViewDir = normalize(-mvPosition.xyz);
+            gl_Position = projectionMatrix * mvPosition;
+          }
+        `}
+        fragmentShader={`
+          uniform float uTime;
+          uniform sampler2D uMap;
+          varying vec2 vUv;
+          varying vec3 vNormal;
+          varying vec3 vViewDir;
+          varying vec3 vPos;
+
+          // Fast 3D harmonic plasma convection turbulence
+          float plasmaNoise(vec3 p) {
+            float n = sin(p.x * 7.2 + uTime * 0.9) * cos(p.y * 7.2 - uTime * 0.7) * sin(p.z * 7.2 + uTime * 0.5);
+            n += 0.5 * sin(p.x * 15.5 - uTime * 1.4) * cos(p.z * 15.5 + uTime * 1.1);
+            n += 0.25 * cos(p.y * 28.0 + p.x * 22.0 - uTime * 2.1);
+            return n * 0.5 + 0.5;
+          }
+
+          void main() {
+            vec3 normPos = normalize(vPos);
+            float boil = plasmaNoise(normPos * 2.2);
+            float fineGranules = plasmaNoise(normPos * 5.8 + vec3(boil * 0.4));
+
+            vec2 warpedUv = vUv + vec2(sin(vUv.y * 40.0 + uTime * 0.8), cos(vUv.x * 40.0 - uTime * 0.7)) * 0.0035;
+            vec3 texColor = texture2D(uMap, warpedUv).rgb;
+
+            // Astrophysical Solar Limb Darkening: mu = cos(theta) = dot(N, V)
+            float mu = clamp(dot(vNormal, vViewDir), 0.0, 1.0);
+            float limbDarkening = pow(mu, 0.48);
+
+            // Color ramp from dark magnetic umbra to deep crimson-orange limb to white-hot 5778K core
+            vec3 deepLimb = vec3(0.88, 0.22, 0.02);
+            vec3 midPhotosphere = vec3(1.0, 0.58, 0.08);
+            vec3 hotCore = vec3(1.0, 0.96, 0.78);
+
+            float energy = clamp((texColor.r * 0.55 + boil * 0.25 + fineGranules * 0.2) * (0.65 + 0.45 * limbDarkening), 0.0, 1.0);
+            vec3 col = mix(deepLimb, midPhotosphere, smoothstep(0.15, 0.65, energy));
+            col = mix(col, hotCore, smoothstep(0.62, 0.96, energy * limbDarkening));
+
+            // Bright magnetic faculae near the solar limb
+            float faculae = pow(1.0 - mu, 2.2) * smoothstep(0.68, 0.92, fineGranules) * 0.65;
+            col += vec3(1.0, 0.82, 0.35) * faculae;
+
+            gl_FragColor = vec4(col, 1.0);
+          }
+        `}
+      />
+    </mesh>
+  );
 };
 
 // --- Realistic 3D Asteroid Belt with Pitted Craggy Rocks & Chaotic Tumbling ---
 const AsteroidBelt3D: React.FC<{ timeSpeed: number }> = ({ timeSpeed }) => {
   const groupRef = useRef<THREE.Group>(null!);
+  const rockTextures = useMemo(() => getAsteroidRockTextures(), []);
   const geometries = useMemo(
     () => [
       createCraggyAsteroidGeometry(1),
@@ -235,33 +476,39 @@ const AsteroidBelt3D: React.FC<{ timeSpeed: number }> = ({ timeSpeed }) => {
       createCraggyAsteroidGeometry(7),
       createCraggyAsteroidGeometry(12),
       createCraggyAsteroidGeometry(19),
+      createCraggyAsteroidGeometry(27),
+      createCraggyAsteroidGeometry(35),
     ],
     []
   );
 
   const asteroids = useMemo(() => {
-    return Array.from({ length: 160 }).map((_, i) => {
-      const angle = (i / 160) * Math.PI * 2 + (Math.random() - 0.5) * 0.25;
-      const radius = 9.85 + (Math.random() - 0.5) * 0.95;
-      const y = (Math.random() - 0.5) * 0.45;
-      const size = 0.035 + Math.random() * 0.055;
+    return Array.from({ length: 180 }).map((_, i) => {
+      const angle = (i / 180) * Math.PI * 2 + (Math.random() - 0.5) * 0.25;
+      const radius = 9.85 + (Math.random() - 0.5) * 1.05;
+      const y = (Math.random() - 0.5) * 0.48;
+      const size = 0.038 + Math.pow(Math.random(), 1.6) * 0.075;
       const geoIndex = i % geometries.length;
-      // Tumbling physics rotation speeds
       const rotSpeed = [
-        (Math.random() - 0.5) * 0.8,
-        (Math.random() - 0.5) * 0.8,
-        (Math.random() - 0.5) * 0.8,
+        (Math.random() - 0.5) * 0.85,
+        (Math.random() - 0.5) * 0.85,
+        (Math.random() - 0.5) * 0.85,
       ] as [number, number, number];
-      // Carbonaceous & silicate rock tone variations
-      const colors = ['#64748b', '#475569', '#334155', '#52525b', '#71717a'];
-      const color = colors[i % colors.length];
+      // S-type (stony silicate), C-type (dark carbonaceous), and M-type (metallic nickel-iron)
+      const types = [
+        { color: '#9ca3af', roughness: 0.88, metalness: 0.15 },
+        { color: '#64748b', roughness: 0.92, metalness: 0.12 },
+        { color: '#57534e', roughness: 0.95, metalness: 0.08 },
+        { color: '#a8a29e', roughness: 0.78, metalness: 0.42 },
+      ];
+      const matType = types[i % types.length];
 
       return {
         pos: [Math.cos(angle) * radius, y, Math.sin(angle) * radius] as [number, number, number],
         size,
         geoIndex,
         rotSpeed,
-        color,
+        ...matType,
       };
     });
   }, [geometries]);
@@ -269,7 +516,6 @@ const AsteroidBelt3D: React.FC<{ timeSpeed: number }> = ({ timeSpeed }) => {
   useFrame((_, delta) => {
     if (groupRef.current) {
       groupRef.current.rotation.y += delta * 0.08 * timeSpeed;
-      // Animate individual tumbling asteroids
       groupRef.current.children.forEach((child, idx) => {
         const ast = asteroids[idx];
         if (ast) {
@@ -290,9 +536,41 @@ const AsteroidBelt3D: React.FC<{ timeSpeed: number }> = ({ timeSpeed }) => {
           geometry={geometries[ast.geoIndex]}
           scale={[ast.size, ast.size, ast.size]}
         >
-          <meshStandardMaterial color={ast.color} roughness={0.92} metalness={0.18} />
+          <meshStandardMaterial
+            map={rockTextures.map}
+            bumpMap={rockTextures.bumpMap}
+            bumpScale={0.045}
+            color={ast.color}
+            roughness={ast.roughness}
+            metalness={ast.metalness}
+          />
         </mesh>
       ))}
+      {/* 24 Distributed Photogrammetry 3D GLB Asteroids Across the Main Belt */}
+      {Array.from({ length: 24 }).map((_, i) => {
+        const ang = (i / 24) * Math.PI * 2 + (i % 3) * 0.14;
+        const rad = 9.85 + ((i * 7) % 5 - 2) * 0.22;
+        const yPos = ((i * 11) % 5 - 2) * 0.11;
+        const urls = [
+          '/models/asteroid.glb',
+          '/models/asteroid-2.glb',
+          '/models/asteroid_with_minerals.glb',
+        ];
+        return (
+          <FeaturedGLBAsteroid
+            key={`glb-belt-${i}`}
+            modelUrl={urls[i % urls.length]}
+            position={[Math.cos(ang) * rad, yPos, Math.sin(ang) * rad]}
+            size={0.09 + (i % 4) * 0.032}
+            rotationSpeed={[
+              0.35 + (i % 3) * 0.2,
+              0.45 + (i % 4) * 0.18,
+              0.25 + (i % 2) * 0.3,
+            ]}
+            timeSpeed={timeSpeed}
+          />
+        );
+      })}
     </group>
   );
 };
@@ -308,6 +586,16 @@ const PlanetCloseUpDebrisAndMeteors: React.FC<{
   const meteorGroupRef = useRef<THREE.Group>(null!);
   const tracerGroupRef = useRef<THREE.Group>(null!);
 
+  const rockTextures = useMemo(() => getAsteroidRockTextures(), []);
+  const meteoroidGeometries = useMemo(
+    () => [
+      createCraggyAsteroidGeometry(11),
+      createCraggyAsteroidGeometry(23),
+      createCraggyAsteroidGeometry(41),
+    ],
+    []
+  );
+
   const debrisCount = planet.id === 'earth' ? 160 : planet.id === 'mars' || planet.id === 'saturn' ? 85 : 55;
 
   const debrisItems = useMemo(() => {
@@ -319,7 +607,7 @@ const PlanetCloseUpDebrisAndMeteors: React.FC<{
       const y = r * Math.sin(phi);
       const z = r * Math.sin(theta) * Math.cos(phi);
       const isRedHazard = i % 3 === 0;
-      const size = isRedHazard ? 0.028 : 0.02;
+      const size = isRedHazard ? 0.03 : 0.022;
       return { pos: [x, y, z] as [number, number, number], isRedHazard, size };
     });
   }, [debrisCount, planet.id]);
@@ -349,7 +637,7 @@ const PlanetCloseUpDebrisAndMeteors: React.FC<{
     });
   }, [planet.id]);
 
-  // High-velocity incandescent bolides
+  // High-velocity incandescent bolides with rocky chondrite core
   const meteors = useMemo(() => {
     return Array.from({ length: 7 }).map((_, i) => ({
       offset: i * 1.4,
@@ -398,12 +686,21 @@ const PlanetCloseUpDebrisAndMeteors: React.FC<{
         </group>
       )}
 
-      {/* 2. 3D SPACE DEBRIS: SATELLITE SOLAR SHARDS, ROCKET CASINGS & SHRAPNEL */}
+      {/* 2. 3D SPACE DEBRIS: SATELLITE SOLAR SHARDS, ROCKET CASINGS & CRAGGY METEOROIDS */}
       {showDebris && (
         <group ref={debrisGroupRef}>
           {debrisItems.map((d, i) => (
             <group key={i} position={d.pos}>
-              {i % 4 === 0 ? (
+              {i % 6 === 0 ? (
+                // High-Detail Photogrammetry 3D GLB Meteoroid / Mineral Asteroid Fragment
+                <FeaturedGLBAsteroid
+                  modelUrl={ASTEROID_GLB_MODELS[i % ASTEROID_GLB_MODELS.length]}
+                  position={[0, 0, 0]}
+                  size={d.size * 2.1}
+                  rotationSpeed={[0.5, 0.7, 0.3]}
+                  timeSpeed={1}
+                />
+              ) : i % 4 === 0 && planet.id === 'earth' ? (
                 // Solar array shard (blue-gold reflective panel)
                 <mesh rotation={[i * 0.5, i * 0.3, i * 0.2]}>
                   <boxGeometry args={[d.size * 2.2, d.size * 1.1, d.size * 0.15]} />
@@ -415,21 +712,28 @@ const PlanetCloseUpDebrisAndMeteors: React.FC<{
                     emissiveIntensity={0.25}
                   />
                 </mesh>
-              ) : i % 4 === 1 ? (
+              ) : i % 4 === 1 && (planet.id === 'earth' || planet.id === 'mars') ? (
                 // Spent rocket stage cylinder
                 <mesh rotation={[i * 0.2, 0, i * 0.6]}>
-                  <cylinderGeometry args={[d.size * 0.5, d.size * 0.5, d.size * 2, 8]} />
-                  <meshStandardMaterial color="#cbd5e1" metalness={0.7} roughness={0.3} />
+                  <cylinderGeometry args={[d.size * 0.5, d.size * 0.5, d.size * 2, 12]} />
+                  <meshStandardMaterial color="#cbd5e1" metalness={0.78} roughness={0.25} />
                 </mesh>
               ) : (
-                // Shrapnel fragment with pulsing hazard beacon
-                <mesh>
-                  <octahedronGeometry args={[d.size, 0]} />
+                // Photorealistic Pitted Lithic Meteoroid / Tracked Hazard Fragment
+                <mesh
+                  geometry={meteoroidGeometries[i % meteoroidGeometries.length]}
+                  scale={[d.size * 1.15, d.size * 1.15, d.size * 1.15]}
+                  rotation={[i * 0.7, i * 0.4, i * 0.9]}
+                >
                   <meshStandardMaterial
-                    color={d.isRedHazard ? '#ff3b21' : '#94a3b8'}
+                    map={rockTextures.map}
+                    bumpMap={rockTextures.bumpMap}
+                    bumpScale={0.04}
+                    color={d.isRedHazard ? '#ff5733' : '#9ca3af'}
                     emissive={d.isRedHazard ? '#ff3b21' : '#000000'}
-                    emissiveIntensity={d.isRedHazard ? 0.85 : 0}
-                    roughness={0.4}
+                    emissiveIntensity={d.isRedHazard ? 0.65 : 0}
+                    roughness={0.85}
+                    metalness={0.2}
                   />
                 </mesh>
               )}
@@ -438,30 +742,52 @@ const PlanetCloseUpDebrisAndMeteors: React.FC<{
         </group>
       )}
 
-      {/* 3. HIGH-VELOCITY INCANDESCENT BOLIDE FIREBALLS */}
+      {/* 3. HIGH-VELOCITY INCANDESCENT BOLIDE FIREBALLS WITH ABLATING 3D GLB ROCK CORE */}
       {showMeteors && (
         <group ref={meteorGroupRef}>
           {meteors.map((_, idx) => (
             <group key={idx} rotation={[0, 0, -0.15]}>
-              {/* White-Hot Incandescent Core */}
+              {/* Real 3D GLB Asteroid Core Inside the Incandescent Fireball */}
+              <group position={[0.42, 0, 0]}>
+                <FeaturedGLBAsteroid
+                  modelUrl={ASTEROID_GLB_MODELS[idx % ASTEROID_GLB_MODELS.length]}
+                  position={[0, 0, 0]}
+                  size={0.055}
+                  rotationSpeed={[1.8, 2.2, 1.4]}
+                  timeSpeed={1}
+                />
+              </group>
+              {/* Surrounding Ionization Plasma Bow Shock */}
               <mesh position={[0.42, 0, 0]}>
-                <sphereGeometry args={[0.045, 16, 16]} />
-                <meshBasicMaterial color="#ffffff" />
-              </mesh>
-              {/* Surrounding Ionization Plasma Aura */}
-              <mesh position={[0.42, 0, 0]}>
-                <sphereGeometry args={[0.075, 16, 16]} />
-                <meshBasicMaterial color="#fef08a" transparent opacity={0.65} />
+                <sphereGeometry args={[0.082, 16, 16]} />
+                <meshBasicMaterial
+                  color="#fef08a"
+                  transparent
+                  opacity={0.62}
+                  blending={THREE.AdditiveBlending}
+                />
               </mesh>
               {/* Glowing Aerodynamic Plasma Shockwave Cone */}
               <mesh position={[0.05, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
-                <coneGeometry args={[0.055, 0.85, 12]} />
-                <meshBasicMaterial color="#ff3b21" transparent opacity={0.75} side={THREE.DoubleSide} />
+                <coneGeometry args={[0.058, 0.85, 16]} />
+                <meshBasicMaterial
+                  color="#ff3b21"
+                  transparent
+                  opacity={0.78}
+                  side={THREE.DoubleSide}
+                  blending={THREE.AdditiveBlending}
+                />
               </mesh>
               {/* Secondary Outer Thermal Wake */}
-              <mesh position={[-0.15, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
-                <coneGeometry args={[0.085, 1.25, 8]} />
-                <meshBasicMaterial color="#ea580c" transparent opacity={0.35} side={THREE.DoubleSide} />
+              <mesh position={[-0.18, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
+                <coneGeometry args={[0.09, 1.3, 12]} />
+                <meshBasicMaterial
+                  color="#ea580c"
+                  transparent
+                  opacity={0.38}
+                  side={THREE.DoubleSide}
+                  blending={THREE.AdditiveBlending}
+                />
               </mesh>
             </group>
           ))}
@@ -487,6 +813,7 @@ const TexturedPlanetSphere: React.FC<TexturedPlanetSphereProps> = ({
 }) => {
   const meshRef = useRef<THREE.Mesh>(null!);
   const cloudsRef = useRef<THREE.Mesh>(null!);
+  const cloudShadowRef = useRef<THREE.Mesh>(null!);
   const coronaRef = useRef<THREE.Mesh>(null!);
   const coronaOuterRef = useRef<THREE.Mesh>(null!);
   const prominencesRef = useRef<THREE.Group>(null!);
@@ -501,169 +828,226 @@ const TexturedPlanetSphere: React.FC<TexturedPlanetSphereProps> = ({
 
   useFrame((state, delta) => {
     if (meshRef.current) {
-      meshRef.current.rotation.y += delta * (planet.id === 'sun' ? 0.22 : 0.42);
+      meshRef.current.rotation.y += delta * (planet.id === 'sun' ? 0.22 : 0.36);
     }
     if (cloudsRef.current) {
-      cloudsRef.current.rotation.y += delta * 0.58;
+      cloudsRef.current.rotation.y += delta * 0.48;
+    }
+    if (cloudShadowRef.current) {
+      cloudShadowRef.current.rotation.y += delta * 0.48;
     }
     if (coronaRef.current) {
-      const pulse = 1 + Math.sin(state.clock.elapsedTime * 2.5) * 0.035;
+      const pulse = 1 + Math.sin(state.clock.elapsedTime * 2.5) * 0.03;
       coronaRef.current.scale.set(pulse, pulse, pulse);
     }
     if (coronaOuterRef.current) {
-      const outerPulse = 1 + Math.cos(state.clock.elapsedTime * 1.8) * 0.055;
+      const outerPulse = 1 + Math.cos(state.clock.elapsedTime * 1.8) * 0.05;
       coronaOuterRef.current.scale.set(outerPulse, outerPulse, outerPulse);
     }
     if (prominencesRef.current) {
-      prominencesRef.current.rotation.y += delta * 0.35;
-      prominencesRef.current.rotation.z = Math.sin(state.clock.elapsedTime * 0.8) * 0.15;
+      prominencesRef.current.rotation.y += delta * 0.32;
+      prominencesRef.current.rotation.z = Math.sin(state.clock.elapsedTime * 0.8) * 0.14;
     }
     if (moonGroupRef.current) {
-      moonGroupRef.current.rotation.y += delta * 0.65;
+      moonGroupRef.current.rotation.y += delta * 0.55;
     }
   });
 
   return (
     <group>
       {/* Main Celestial Body Surface Mesh */}
-      <mesh
-        ref={meshRef}
-        rotation={[
-          planet.id === 'uranus' ? Math.PI / 2.1 : planet.id === 'saturn' ? 0.42 : 0.15,
-          0,
-          0,
-        ]}
-        onClick={(e) => {
-          if (onClick) {
-            e.stopPropagation();
-            onClick();
-          }
-        }}
-      >
-        <sphereGeometry args={[radius, 64, 64]} />
-        {planet.id === 'sun' ? (
-          <meshBasicMaterial map={textures.map} />
-        ) : (
-          <meshStandardMaterial
+      {planet.id === 'sun' ? (
+        <PhotorealisticSunShaderSurface
+          radius={radius}
+          baseMap={textures.map}
+          onClick={onClick}
+        />
+      ) : (
+        <mesh
+          ref={meshRef}
+          rotation={[
+            planet.id === 'uranus' ? Math.PI / 2.1 : planet.id === 'saturn' ? 0.42 : 0.15,
+            0,
+            0,
+          ]}
+          onClick={(e) => {
+            if (onClick) {
+              e.stopPropagation();
+              onClick();
+            }
+          }}
+        >
+          <sphereGeometry args={[radius, 64, 64]} />
+          <meshPhysicalMaterial
             map={textures.map}
             bumpMap={textures.bumpMap}
-            bumpScale={textures.bumpMap ? (planet.id === 'earth' ? 0.055 : planet.id === 'mars' ? 0.065 : 0.035) : 0}
+            bumpScale={
+              textures.bumpMap
+                ? planet.id === 'earth'
+                  ? 0.055
+                  : planet.id === 'mars' || planet.id === 'mercury'
+                  ? 0.085
+                  : 0.03
+                : 0
+            }
             roughnessMap={planet.id === 'earth' ? textures.specularMap : undefined}
-            roughness={planet.id === 'earth' ? 0.65 : 0.78}
-            metalness={planet.id === 'earth' ? 0.12 : 0.08}
+            roughness={
+              planet.id === 'earth'
+                ? 0.72
+                : planet.id === 'mercury' || planet.id === 'mars'
+                ? 0.88
+                : 0.68
+            }
+            metalness={planet.id === 'earth' ? 0.1 : 0.05}
+            clearcoat={planet.id === 'earth' ? 0.32 : planet.id === 'uranus' || planet.id === 'neptune' ? 0.18 : 0.0}
+            clearcoatRoughness={0.35}
             emissive={isSelected ? planet.color : '#000000'}
-            emissiveIntensity={isSelected ? 0.15 : 0}
+            emissiveIntensity={isSelected ? 0.12 : 0}
           />
-        )}
-      </mesh>
+        </mesh>
+      )}
 
-      {/* Earth's Swirling Atmospheric Cloud Layer */}
+      {/* Earth's Subtle Cloud Drop-Shadow Layer + High-Altitude 3D Cyclone Cloud Deck */}
       {planet.id === 'earth' && textures.cloudsMap && (
-        <mesh ref={cloudsRef}>
-          <sphereGeometry args={[radius * 1.025, 48, 48]} />
-          <meshStandardMaterial
-            map={textures.cloudsMap}
-            transparent
-            opacity={0.88}
-            depthWrite={false}
-          />
-        </mesh>
+        <>
+          <mesh ref={cloudShadowRef} rotation={[0.01, 0.015, 0]}>
+            <sphereGeometry args={[radius * 1.008, 64, 64]} />
+            <meshBasicMaterial
+              map={textures.cloudsMap}
+              color="#020617"
+              transparent
+              opacity={0.35}
+              depthWrite={false}
+            />
+          </mesh>
+          <mesh ref={cloudsRef}>
+            <sphereGeometry args={[radius * 1.022, 64, 64]} />
+            <meshStandardMaterial
+              map={textures.cloudsMap}
+              bumpMap={textures.cloudsMap}
+              bumpScale={0.018}
+              roughness={0.85}
+              transparent
+              opacity={0.92}
+              depthWrite={false}
+            />
+          </mesh>
+        </>
       )}
 
-      {/* Atmospheric Rayleigh Scattering & Limb Glow for Atmospheric Planets */}
+      {/* Custom GLSL Fresnel Rayleigh Scattering Halo for Atmospheric Planets */}
       {atmosphere && (
-        <mesh>
-          <sphereGeometry args={[radius * atmosphere.scale, 48, 48]} />
-          <meshBasicMaterial
-            color={atmosphere.color}
-            transparent
-            opacity={atmosphere.opacity}
-            side={THREE.BackSide}
-            blending={THREE.AdditiveBlending}
-          />
-        </mesh>
+        <AtmosphereFresnelHalo
+          radius={radius}
+          color={atmosphere.color}
+          twilightColor={atmosphere.twilightColor}
+          scale={atmosphere.scale}
+          intensity={atmosphere.intensity}
+          power={atmosphere.power}
+        />
       )}
 
-      {/* The Sun: Multi-Stage Corona, Inner Chromosphere & Magnetic Solar Prominences */}
+      {/* The Sun: Volumetric Fresnel Chromosphere & Outer Coronal Plasma Halo */}
       {planet.id === 'sun' && (
         <>
-          {/* Inner Chromosphere Glow */}
-          <mesh ref={coronaRef}>
-            <sphereGeometry args={[radius * 1.06, 48, 48]} />
-            <meshBasicMaterial
-              color="#fef08a"
-              transparent
-              opacity={0.38}
-              side={THREE.BackSide}
-              blending={THREE.AdditiveBlending}
-            />
-          </mesh>
-          {/* Outer Coronal Plasma Halo */}
-          <mesh ref={coronaOuterRef}>
-            <sphereGeometry args={[radius * 1.25, 48, 48]} />
-            <meshBasicMaterial
-              color="#f59e0b"
-              transparent
-              opacity={0.24}
-              side={THREE.BackSide}
-              blending={THREE.AdditiveBlending}
-            />
-          </mesh>
+          <AtmosphereFresnelHalo
+            radius={radius}
+            color="#fef08a"
+            twilightColor="#f97316"
+            scale={1.08}
+            intensity={1.65}
+            power={2.2}
+          />
+          <AtmosphereFresnelHalo
+            radius={radius}
+            color="#f59e0b"
+            twilightColor="#dc2626"
+            scale={1.26}
+            intensity={1.15}
+            power={3.4}
+          />
           {/* Magnetic Solar Prominence Loops */}
           <group ref={prominencesRef}>
-            <mesh position={[radius * 0.95, radius * 0.25, 0]} rotation={[0, 0, 0.4]}>
-              <torusGeometry args={[radius * 0.18, 0.022, 12, 32, Math.PI]} />
-              <meshBasicMaterial color="#ffedd5" transparent opacity={0.85} />
+            <mesh position={[radius * 0.96, radius * 0.25, 0]} rotation={[0, 0, 0.4]}>
+              <torusGeometry args={[radius * 0.18, 0.02, 16, 40, Math.PI]} />
+              <meshBasicMaterial
+                color="#ffedd5"
+                transparent
+                opacity={0.85}
+                blending={THREE.AdditiveBlending}
+              />
             </mesh>
-            <mesh position={[-radius * 0.9, -radius * 0.35, 0]} rotation={[0, 0, -1.8]}>
-              <torusGeometry args={[radius * 0.22, 0.024, 12, 32, Math.PI]} />
-              <meshBasicMaterial color="#f97316" transparent opacity={0.8} />
+            <mesh position={[-radius * 0.92, -radius * 0.35, 0]} rotation={[0, 0, -1.8]}>
+              <torusGeometry args={[radius * 0.22, 0.022, 16, 40, Math.PI]} />
+              <meshBasicMaterial
+                color="#f97316"
+                transparent
+                opacity={0.8}
+                blending={THREE.AdditiveBlending}
+              />
             </mesh>
-            <mesh position={[0, radius * 0.92, -radius * 0.2]} rotation={[1.2, 0, 0]}>
-              <torusGeometry args={[radius * 0.15, 0.02, 12, 32, Math.PI]} />
-              <meshBasicMaterial color="#ef4444" transparent opacity={0.75} />
+            <mesh position={[0, radius * 0.93, -radius * 0.2]} rotation={[1.2, 0, 0]}>
+              <torusGeometry args={[radius * 0.15, 0.018, 16, 40, Math.PI]} />
+              <meshBasicMaterial
+                color="#ef4444"
+                transparent
+                opacity={0.75}
+                blending={THREE.AdditiveBlending}
+              />
             </mesh>
           </group>
         </>
       )}
 
-      {/* Saturn & Uranus Rings with Cassini Division */}
+      {/* Saturn & Uranus Rings with Cassini & Encke Divisions */}
       {planet.hasRings && (
-        <group rotation={[planet.id === 'uranus' ? 1.45 : 1.15, 0.2, 0]}>
+        <group rotation={[planet.id === 'uranus' ? 1.45 : 1.18, 0.22, 0]}>
           {planet.id === 'saturn' && textures.ringMap ? (
             <mesh>
-              <planeGeometry args={[radius * 4.4, radius * 4.4]} />
+              <planeGeometry args={[radius * 4.5, radius * 4.5]} />
               <meshStandardMaterial
                 map={textures.ringMap}
                 side={THREE.DoubleSide}
                 transparent
-                roughness={0.55}
+                roughness={0.5}
+                metalness={0.1}
                 depthWrite={false}
               />
             </mesh>
           ) : (
-            <Ring args={[radius * 1.4, radius * 1.9, 64]}>
-              <meshStandardMaterial
-                color={planet.accentColor}
-                side={THREE.DoubleSide}
-                transparent
-                opacity={0.45}
-              />
-            </Ring>
+            <>
+              <Ring args={[radius * 1.42, radius * 1.62, 96]}>
+                <meshStandardMaterial
+                  color={planet.accentColor}
+                  side={THREE.DoubleSide}
+                  transparent
+                  opacity={0.32}
+                />
+              </Ring>
+              <Ring args={[radius * 1.68, radius * 1.88, 96]}>
+                <meshStandardMaterial
+                  color="#e0f2fe"
+                  side={THREE.DoubleSide}
+                  transparent
+                  opacity={0.48}
+                />
+              </Ring>
+            </>
           )}
         </group>
       )}
 
-      {/* Earth's Cratered Moon */}
+      {/* Earth's Cratered Moon with High-Contrast Regolith Relief */}
       {planet.id === 'earth' && moonTextures && (
         <group ref={moonGroupRef}>
-          <mesh position={[radius * 2.1, radius * 0.25, 0]}>
-            <sphereGeometry args={[radius * 0.24, 32, 32]} />
+          <mesh position={[radius * 2.15, radius * 0.24, 0]}>
+            <sphereGeometry args={[radius * 0.24, 48, 48]} />
             <meshStandardMaterial
               map={moonTextures.map}
               bumpMap={moonTextures.bumpMap}
-              bumpScale={0.03}
-              roughness={0.88}
+              bumpScale={0.055}
+              roughness={0.92}
+              metalness={0.05}
             />
           </mesh>
         </group>
@@ -717,7 +1101,7 @@ const OrbitingPlanetMesh: React.FC<OrbitingPlanetProps> = ({
       )}
 
       <group ref={groupRef} position={[planet.orbitRadius, 0, 0]}>
-        <TexturedPlanetSphere
+        <PlanetGLBModel
           planet={planet}
           radius={planet.radiusScale}
           isSelected={isSelected}
@@ -942,6 +1326,499 @@ const Spacecraft3DModel: React.FC<Spacecraft3DSceneProps> = ({
   );
 };
 
+// ============================================================================
+// HIGH-FIDELITY 3D GLB ASSET MAPPINGS & RUNTIME ENGINE
+// ============================================================================
+
+export const PLANET_GLB_MAP: Record<string, string> = {
+  sun: '/models/sun_model.glb',
+  mercury: '/models/mercury_planet.glb',
+  venus: '/models/venus_v1.1.glb',
+  earth: '/models/earth.glb',
+  moon: '/models/moon.glb',
+  mars: '/models/mars.glb',
+  jupiter: '/models/jupiter.glb',
+  saturn: '/models/saturn.glb',
+  uranus: '/models/realistic_uranus_4k.glb',
+  neptune: '/models/neptune_v2.glb',
+  ceres: '/models/asteroid_with_minerals.glb',
+};
+
+export const SPACECRAFT_GLB_MAP: Record<string, string> = {
+  apollo: '/models/apollo_lunar_module.glb',
+  rover: '/models/perseverance_mars_rover.glb',
+  voyager: '/models/voyager-1.glb',
+  jwst: '/models/jwst_james_webb_space_telescope.glb',
+  iss: '/models/iss-_international_space_station.glb',
+  hubble: '/models/cassini_huygens.glb',
+  cassini: '/models/cassini_huygens.glb',
+  xwing: '/models/x-wing_hanger_diorama.glb',
+};
+
+export const ASTEROID_GLB_MODELS = [
+  '/models/asteroid.glb',
+  '/models/asteroid-2.glb',
+  '/models/asteroid_with_minerals.glb',
+];
+
+// --- Resilient Error Boundary for 3D GLB Models ---
+class GLBErrorBoundary extends Component<
+  { fallback: ReactNode; children: ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: { fallback: ReactNode; children: ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+  componentDidCatch(error: unknown) {
+    console.warn('3D GLB Model encountered error, smoothly falling back:', error);
+  }
+  render() {
+    if (this.state.hasError) {
+      return this.props.fallback;
+    }
+    return this.props.children;
+  }
+}
+
+// --- Orbiting Moon GLB Component ---
+const MoonGLBMesh: React.FC<{ radius: number }> = ({ radius }) => {
+  const { scene } = useGLTF('/models/moon.glb');
+  const normalizedMoon = useMemo(() => {
+    const clone = scene.clone(true);
+    const box = new THREE.Box3().setFromObject(clone);
+    const center = new THREE.Vector3();
+    box.getCenter(center);
+    const sphere = new THREE.Sphere();
+    box.getBoundingSphere(sphere);
+    const scale = sphere.radius > 0 ? radius / sphere.radius : 1;
+    clone.position.set(-center.x * scale, -center.y * scale, -center.z * scale);
+    clone.scale.setScalar(scale);
+
+    clone.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh) {
+        const mesh = child as THREE.Mesh;
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+      }
+    });
+
+    const wrapper = new THREE.Group();
+    wrapper.add(clone);
+    return wrapper;
+  }, [scene, radius]);
+
+  return <primitive object={normalizedMoon} />;
+};
+
+const OrbitingMoonGLB: React.FC<{ earthRadius: number }> = ({ earthRadius }) => {
+  const moonGroupRef = useRef<THREE.Group>(null!);
+  useFrame((_, delta) => {
+    if (moonGroupRef.current) {
+      moonGroupRef.current.rotation.y += delta * 0.55;
+    }
+  });
+
+  return (
+    <group ref={moonGroupRef}>
+      <group position={[earthRadius * 2.2, earthRadius * 0.25, 0]}>
+        <GLBErrorBoundary
+          fallback={
+            <mesh>
+              <sphereGeometry args={[earthRadius * 0.24, 32, 32]} />
+              <meshStandardMaterial color="#94a3b8" roughness={0.9} />
+            </mesh>
+          }
+        >
+          <Suspense
+            fallback={
+              <mesh>
+                <sphereGeometry args={[earthRadius * 0.24, 32, 32]} />
+                <meshStandardMaterial color="#94a3b8" roughness={0.9} />
+              </mesh>
+            }
+          >
+            <MoonGLBMesh radius={earthRadius * 0.24} />
+          </Suspense>
+        </GLBErrorBoundary>
+      </group>
+    </group>
+  );
+};
+
+// --- Authentic Planetary 3D GLB Model with Bounding-Box Centering & Atmosphere ---
+interface PlanetGLBProps {
+  planet: PlanetData;
+  radius: number;
+  isSelected?: boolean;
+  onClick?: () => void;
+  spinSpeed?: number;
+}
+
+const PlanetGLBInner: React.FC<PlanetGLBProps> = ({
+  planet,
+  radius,
+  isSelected: _isSelected = false,
+  onClick,
+  spinSpeed = 0.28,
+}) => {
+  const modelUrl = PLANET_GLB_MAP[planet.id] || PLANET_GLB_MAP.earth;
+  const { scene } = useGLTF(modelUrl);
+  const groupRef = useRef<THREE.Group>(null!);
+  const cloudsRef = useRef<THREE.Mesh>(null!);
+  const earthExtraTextures = useMemo(
+    () => (planet.id === 'earth' ? getPlanetTextures('earth') : null),
+    [planet.id]
+  );
+
+  const clonedScene = useMemo(() => {
+    const clone = scene.clone(true);
+    clone.updateMatrixWorld(true);
+
+    // Measure ONLY the core planet sphere mesh (excluding outer ring planes like Circle or pierscien)
+    // so every planet's globe has exact radius === `radius` and rings extend naturally outside it!
+    const coreBox = new THREE.Box3();
+    let foundCoreMesh = false;
+
+    clone.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh) {
+        const mesh = child as THREE.Mesh;
+        const lowerName = (mesh.name || '').toLowerCase();
+        const parentName = (mesh.parent?.name || '').toLowerCase();
+
+        // Hide Jupiter's nearly-invisible untextured dummy ring plane so it doesn't skew bounds
+        if (planet.id === 'jupiter' && (lowerName.includes('pierscien') || parentName.includes('pierscien'))) {
+          mesh.visible = false;
+          return;
+        }
+
+        const isRing =
+          lowerName.includes('ring') ||
+          lowerName.includes('circle') ||
+          lowerName.includes('pierscien') ||
+          parentName.includes('ring') ||
+          parentName.includes('circle');
+
+        if (!isRing) {
+          coreBox.expandByObject(mesh);
+          foundCoreMesh = true;
+        }
+
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        if (mesh.material) {
+          const tuneMaterial = (m: THREE.Material) => {
+            m.side = isRing ? THREE.DoubleSide : THREE.FrontSide;
+            const stdMat = m as THREE.MeshStandardMaterial;
+            if (stdMat.map) {
+              stdMat.map.anisotropy = 8;
+              stdMat.map.colorSpace = THREE.SRGBColorSpace;
+            }
+            if (isRing) {
+              stdMat.transparent = true;
+              stdMat.depthWrite = false;
+            }
+            m.needsUpdate = true;
+          };
+          if (Array.isArray(mesh.material)) {
+            mesh.material.forEach(tuneMaterial);
+          } else {
+            tuneMaterial(mesh.material);
+          }
+        }
+      }
+    });
+
+    if (!foundCoreMesh) {
+      coreBox.setFromObject(clone);
+    }
+
+    const center = new THREE.Vector3();
+    coreBox.getCenter(center);
+    const size = new THREE.Vector3();
+    coreBox.getSize(size);
+    const coreRadius = Math.max(size.x, size.y, size.z) * 0.5;
+    const scale = coreRadius > 0 ? radius / coreRadius : 1;
+
+    clone.position.set(-center.x * scale, -center.y * scale, -center.z * scale);
+    clone.scale.setScalar(scale);
+
+    const wrapper = new THREE.Group();
+    wrapper.add(clone);
+    return wrapper;
+  }, [scene, radius, planet.id]);
+
+  const tilt = useMemo(() => {
+    switch (planet.id) {
+      case 'uranus':
+        return [Math.PI / 2.1, 0, 0] as [number, number, number];
+      case 'saturn':
+        return [0.46, 0.15, 0] as [number, number, number];
+      case 'earth':
+        return [0.41, 0, 0] as [number, number, number];
+      case 'mars':
+        return [0.44, 0, 0] as [number, number, number];
+      case 'neptune':
+        return [0.49, 0, 0] as [number, number, number];
+      case 'jupiter':
+        return [0.05, 0, 0] as [number, number, number];
+      default:
+        return [0.1, 0, 0] as [number, number, number];
+    }
+  }, [planet.id]);
+
+  useFrame((_, delta) => {
+    if (groupRef.current) {
+      groupRef.current.rotation.y += delta * (planet.id === 'sun' ? spinSpeed * 0.5 : spinSpeed);
+    }
+    if (cloudsRef.current) {
+      cloudsRef.current.rotation.y += delta * (spinSpeed * 1.35);
+    }
+  });
+
+  const atmosphere = ATMOSPHERE_PROFILES[planet.id];
+
+  return (
+    <group rotation={tilt}>
+      <group
+        ref={groupRef}
+        onClick={(e) => {
+          if (onClick) {
+            e.stopPropagation();
+            onClick();
+          }
+        }}
+      >
+        <primitive object={clonedScene} />
+      </group>
+
+      {/* Earth's Live Rotating 3D Atmospheric Cloud Deck over 8K earth.glb */}
+      {planet.id === 'earth' && earthExtraTextures?.cloudsMap && (
+        <mesh ref={cloudsRef}>
+          <sphereGeometry args={[radius * 1.018, 64, 64]} />
+          <meshStandardMaterial
+            map={earthExtraTextures.cloudsMap}
+            bumpMap={earthExtraTextures.cloudsMap}
+            bumpScale={0.015}
+            roughness={0.85}
+            transparent
+            opacity={0.78}
+            depthWrite={false}
+          />
+        </mesh>
+      )}
+
+      {/* Atmospheric Rayleigh Scattering Glow around GLB */}
+      {atmosphere && (
+        <AtmosphereFresnelHalo
+          radius={radius}
+          color={atmosphere.color}
+          twilightColor={atmosphere.twilightColor}
+          scale={atmosphere.scale}
+          intensity={atmosphere.intensity * 0.95}
+          power={atmosphere.power}
+        />
+      )}
+
+      {/* Solar Flare Halo if Sun */}
+      {planet.id === 'sun' && (
+        <>
+          <AtmosphereFresnelHalo
+            radius={radius}
+            color="#fef08a"
+            twilightColor="#f97316"
+            scale={1.08}
+            intensity={1.65}
+            power={2.2}
+          />
+          <AtmosphereFresnelHalo
+            radius={radius}
+            color="#f59e0b"
+            twilightColor="#dc2626"
+            scale={1.26}
+            intensity={1.15}
+            power={3.4}
+          />
+        </>
+      )}
+
+      {/* Earth's Orbiting Moon in 3D using moon.glb */}
+      {planet.id === 'earth' && (
+        <OrbitingMoonGLB earthRadius={radius} />
+      )}
+    </group>
+  );
+};
+
+const PlanetGLBModel: React.FC<PlanetGLBProps> = (props) => {
+  return (
+    <GLBErrorBoundary fallback={<TexturedPlanetSphere {...props} />}>
+      <Suspense fallback={<TexturedPlanetSphere {...props} />}>
+        <PlanetGLBInner {...props} />
+      </Suspense>
+    </GLBErrorBoundary>
+  );
+};
+
+// --- Authentic Spacecraft 3D GLB Model with Bounding-Box Centering & Hotspots ---
+const SpacecraftGLBInner: React.FC<Spacecraft3DSceneProps> = ({
+  craft,
+  scannedHotspots,
+  activeHotspot,
+  onSelectHotspot,
+}) => {
+  const modelUrl = SPACECRAFT_GLB_MAP[craft.id] || SPACECRAFT_GLB_MAP.apollo;
+  const { scene } = useGLTF(modelUrl);
+  const groupRef = useRef<THREE.Group>(null!);
+
+  const clonedScene = useMemo(() => {
+    const clone = scene.clone(true);
+    const box = new THREE.Box3().setFromObject(clone);
+    const center = new THREE.Vector3();
+    box.getCenter(center);
+    const size = new THREE.Vector3();
+    box.getSize(size);
+    const maxDim = Math.max(size.x, size.y, size.z);
+    const targetDim = craft.id === 'xwing' ? 3.4 : craft.id === 'iss' ? 3.0 : 2.5;
+    const scale = maxDim > 0 ? targetDim / maxDim : 1;
+
+    clone.position.set(-center.x * scale, -center.y * scale, -center.z * scale);
+    clone.scale.setScalar(scale);
+
+    clone.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh) {
+        const mesh = child as THREE.Mesh;
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        if (mesh.material) {
+          if (Array.isArray(mesh.material)) {
+            mesh.material.forEach((m) => {
+              m.side = THREE.DoubleSide;
+              m.needsUpdate = true;
+            });
+          } else {
+            mesh.material.side = THREE.DoubleSide;
+            mesh.material.needsUpdate = true;
+          }
+        }
+      }
+    });
+
+    const wrapper = new THREE.Group();
+    wrapper.add(clone);
+    return wrapper;
+  }, [scene, craft.id]);
+
+  useFrame((_, delta) => {
+    if (groupRef.current) {
+      groupRef.current.rotation.y += delta * 0.16;
+    }
+  });
+
+  return (
+    <Float speed={1.2} rotationIntensity={0.12} floatIntensity={0.22}>
+      <group>
+        <group ref={groupRef}>
+          <primitive object={clonedScene} />
+        </group>
+
+        {craft.hotspots.map((hotspot) => {
+          const isScanned = scannedHotspots.includes(hotspot.id);
+          const isActive = activeHotspot?.id === hotspot.id;
+
+          return (
+            <Html key={hotspot.id} position={hotspot.position} center distanceFactor={10}>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSelectHotspot(hotspot);
+                }}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-mono font-bold transition-all shadow-lg border ${
+                  isActive
+                    ? 'bg-amber-400 text-slate-950 border-white scale-110 shadow-amber-400/40'
+                    : isScanned
+                    ? 'bg-emerald-500/90 text-slate-950 border-emerald-200'
+                    : 'bg-cyan-500/90 text-slate-950 border-white animate-pulse'
+                }`}
+              >
+                <span>{isScanned ? '✓' : '🔍'}</span>
+                <span className="whitespace-nowrap">{hotspot.name.split(' ')[0]}</span>
+              </button>
+            </Html>
+          );
+        })}
+      </group>
+    </Float>
+  );
+};
+
+const SpacecraftGLBModel: React.FC<Spacecraft3DSceneProps> = (props) => {
+  return (
+    <GLBErrorBoundary fallback={<Spacecraft3DModel {...props} />}>
+      <Suspense fallback={<Spacecraft3DModel {...props} />}>
+        <SpacecraftGLBInner {...props} />
+      </Suspense>
+    </GLBErrorBoundary>
+  );
+};
+
+// --- Featured High-Poly Asteroid GLB in Asteroid Belt ---
+const FeaturedGLBAsteroidMesh: React.FC<{
+  modelUrl: string;
+  size: number;
+}> = ({ modelUrl, size }) => {
+  const { scene } = useGLTF(modelUrl);
+  const normalizedScene = useMemo(() => {
+    const clone = scene.clone(true);
+    const box = new THREE.Box3().setFromObject(clone);
+    const center = new THREE.Vector3();
+    box.getCenter(center);
+    const sphere = new THREE.Sphere();
+    box.getBoundingSphere(sphere);
+    const scale = sphere.radius > 0 ? size / sphere.radius : 1;
+    clone.position.set(-center.x * scale, -center.y * scale, -center.z * scale);
+    clone.scale.setScalar(scale);
+    const wrapper = new THREE.Group();
+    wrapper.add(clone);
+    return wrapper;
+  }, [scene, size]);
+
+  return <primitive object={normalizedScene} />;
+};
+
+const FeaturedGLBAsteroid: React.FC<{
+  modelUrl: string;
+  position: [number, number, number];
+  size: number;
+  rotationSpeed: [number, number, number];
+  timeSpeed: number;
+}> = ({ modelUrl, position, size, rotationSpeed, timeSpeed }) => {
+  const groupRef = useRef<THREE.Group>(null!);
+
+  useFrame((_, delta) => {
+    if (groupRef.current) {
+      groupRef.current.rotation.x += delta * rotationSpeed[0] * timeSpeed;
+      groupRef.current.rotation.y += delta * rotationSpeed[1] * timeSpeed;
+      groupRef.current.rotation.z += delta * rotationSpeed[2] * timeSpeed;
+    }
+  });
+
+  return (
+    <group position={position}>
+      <group ref={groupRef}>
+        <GLBErrorBoundary fallback={null}>
+          <Suspense fallback={null}>
+            <FeaturedGLBAsteroidMesh modelUrl={modelUrl} size={size} />
+          </Suspense>
+        </GLBErrorBoundary>
+      </group>
+    </group>
+  );
+};
+
 export interface CosmicExplorer3DProps {
   externalPlanetId?: string;
   externalViewMode?: 'solar-system' | 'planet-closeup' | 'spacecraft';
@@ -1120,15 +1997,17 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
           }}
         >
           <color attach="background" args={['#020306']} />
-          <ambientLight intensity={viewMode === 'planet-closeup' ? 0.9 : 0.7} />
-          <pointLight position={[0, 0, 0]} intensity={2.8} color="#fef08a" />
-          <directionalLight position={[12, 16, 14]} intensity={2.0} />
-          <Stars radius={95} depth={50} count={2600} factor={3.5} saturation={0} fade speed={0.8} />
+          <ambientLight intensity={viewMode === 'planet-closeup' ? 0.16 : 0.22} />
+          <hemisphereLight args={['#38bdf8', '#020617', 0.25]} />
+          <pointLight position={[0, 0, 0]} intensity={viewMode === 'solar-system' ? 3.8 : 1.2} color="#fffbeb" distance={90} decay={0.4} />
+          <directionalLight position={[14, 9, 12]} intensity={viewMode === 'planet-closeup' ? 3.2 : 2.2} color="#fffdf5" />
+          <directionalLight position={[-12, -6, -10]} intensity={0.28} color="#38bdf8" />
+          <Stars radius={95} depth={50} count={3200} factor={3.6} saturation={0} fade speed={0.6} />
 
           {viewMode === 'solar-system' ? (
             <group>
               <AsteroidBelt3D timeSpeed={timeSpeed} />
-              {SOLAR_SYSTEM_PLANETS.map((planet) => (
+              {SOLAR_SYSTEM_PLANETS.filter((p) => p.id !== 'moon').map((planet) => (
                 <OrbitingPlanetMesh
                   key={planet.id}
                   planet={planet}
@@ -1142,7 +2021,7 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
           ) : viewMode === 'planet-closeup' ? (
             <group position={typeof window !== 'undefined' && window.innerWidth < 1024 ? [0, 0.25, 0] : [1.45, 0, 0]}>
               <Float speed={1.1} rotationIntensity={0.05} floatIntensity={0.1}>
-                <TexturedPlanetSphere planet={selectedPlanet} radius={1.42} isSelected={false} />
+                <PlanetGLBModel planet={selectedPlanet} radius={1.42} isSelected={false} />
               </Float>
               <PlanetCloseUpDebrisAndMeteors
                 planet={selectedPlanet}
@@ -1152,7 +2031,7 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
               />
             </group>
           ) : (
-            <Spacecraft3DModel
+            <SpacecraftGLBModel
               craft={selectedCraft}
               scannedHotspots={scannedHotspots}
               activeHotspot={activeHotspot}
@@ -1240,6 +2119,12 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
             >
               {isTelemetryHidden ? <Eye className="h-3.5 w-3.5 text-cyan-400" /> : <EyeOff className="h-3.5 w-3.5" />}
             </button>
+
+            {/* 3D Asset Indicator Badge */}
+            <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-950/70 border border-emerald-500/40 text-[9px] font-mono text-emerald-400">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span>20 GLB MODELS ONLINE</span>
+            </div>
           </div>
 
           {/* LEFT FLOATING TELEMETRY COLUMN */}
@@ -2019,9 +2904,9 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
             <>
               {/* Solar System View: Full 9-Planet Dock Strip */}
               {viewMode === 'solar-system' && (
-                <div className="fixed bottom-4 inset-x-4 max-w-4xl mx-auto z-20 pointer-events-auto">
+                <div className="fixed bottom-4 inset-x-4 max-w-5xl mx-auto z-20 pointer-events-auto">
                   <div className="holo-panel-3d border border-zinc-800/90 rounded-2xl p-2.5 shadow-2xl backdrop-blur-xl">
-                    <div className="grid grid-cols-5 sm:grid-cols-9 gap-1.5">
+                    <div className="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-11 gap-1.5">
                       {SOLAR_SYSTEM_PLANETS.map((planet) => {
                         const active = selectedPlanet.id === planet.id;
                         return (

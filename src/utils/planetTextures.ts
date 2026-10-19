@@ -1,50 +1,101 @@
 import * as THREE from 'three';
 
-// Deterministic pseudo-random helper for realistic planetary terrain & noise
-function seededNoise(x: number, y: number, seed = 1): number {
-  const n = Math.sin(x * 12.9898 + y * 78.233 + seed * 43.12) * 43758.5453;
-  return n - Math.floor(n);
+// ============================================================================
+// ULTRA-REALISTIC 3D SPHERICAL FRACTAL NOISE & PLANETARY TEXTURE ENGINE
+// ============================================================================
+// Evaluates noise in 3D Cartesian space (x, y, z on the unit sphere) so there
+// is ZERO longitude seam and no polar pinching across equirectangular maps.
+
+function hash3(ix: number, iy: number, iz: number, seed: number): number {
+  let n = (ix * 374761393 + iy * 668265263 + iz * 2147483647 + seed * 1610612741) | 0;
+  n = (n ^ (n >> 13)) * 1274126177;
+  return ((n ^ (n >> 16)) >>> 0) / 4294967295;
 }
 
-function fbmNoise(x: number, y: number, octaves = 5, seed = 1): number {
+function noise3D(x: number, y: number, z: number, seed = 1): number {
+  const ix = Math.floor(x);
+  const iy = Math.floor(y);
+  const iz = Math.floor(z);
+
+  const fx = x - ix;
+  const fy = y - iy;
+  const fz = z - iz;
+
+  // Quintic C2 smoothstep for artifact-free normal/bump derivatives
+  const u = fx * fx * fx * (fx * (fx * 6 - 15) + 10);
+  const v = fy * fy * fy * (fy * (fy * 6 - 15) + 10);
+  const w = fz * fz * fz * (fz * (fz * 6 - 15) + 10);
+
+  const n000 = hash3(ix, iy, iz, seed);
+  const n100 = hash3(ix + 1, iy, iz, seed);
+  const n010 = hash3(ix, iy + 1, iz, seed);
+  const n110 = hash3(ix + 1, iy + 1, iz, seed);
+  const n001 = hash3(ix, iy, iz + 1, seed);
+  const n101 = hash3(ix + 1, iy, iz + 1, seed);
+  const n011 = hash3(ix, iy + 1, iz + 1, seed);
+  const n111 = hash3(ix + 1, iy + 1, iz + 1, seed);
+
+  const nx00 = n000 + u * (n100 - n000);
+  const nx10 = n010 + u * (n110 - n010);
+  const nx01 = n001 + u * (n101 - n001);
+  const nx11 = n011 + u * (n111 - n011);
+
+  const nxy0 = nx00 + v * (nx10 - nx00);
+  const nxy1 = nx01 + v * (nx11 - nx01);
+
+  return nxy0 + w * (nxy1 - nxy0);
+}
+
+export function fbm3D(x: number, y: number, z: number, octaves = 5, seed = 1): number {
   let value = 0;
   let amplitude = 0.5;
   let freq = 1;
+  let norm = 0;
   for (let i = 0; i < octaves; i++) {
-    const ix = Math.floor(x * freq);
-    const iy = Math.floor(y * freq);
-    const fx = x * freq - ix;
-    const fy = y * freq - iy;
-
-    const u = fx * fx * (3 - 2 * fx);
-    const v = fy * fy * (3 - 2 * fy);
-
-    const a = seededNoise(ix, iy, seed + i * 17);
-    const b = seededNoise(ix + 1, iy, seed + i * 17);
-    const c = seededNoise(ix, iy + 1, seed + i * 17);
-    const d = seededNoise(ix + 1, iy + 1, seed + i * 17);
-
-    const res = a * (1 - u) * (1 - v) + b * u * (1 - v) + c * (1 - u) * v + d * u * v;
-    value += res * amplitude;
+    value += noise3D(x * freq, y * freq, z * freq, seed + i * 31) * amplitude;
+    norm += amplitude;
     amplitude *= 0.5;
-    freq *= 2.05;
+    freq *= 2.07;
   }
-  return value;
+  return value / norm;
+}
+
+export function ridged3D(x: number, y: number, z: number, octaves = 5, seed = 1): number {
+  let value = 0;
+  let amplitude = 0.5;
+  let freq = 1;
+  let weight = 1;
+  let norm = 0;
+  for (let i = 0; i < octaves; i++) {
+    let signal = noise3D(x * freq, y * freq, z * freq, seed + i * 47);
+    signal = 1.0 - Math.abs(signal * 2.0 - 1.0);
+    signal *= signal * weight;
+    weight = Math.min(1, Math.max(0, signal * 1.8));
+    value += signal * amplitude;
+    norm += amplitude;
+    amplitude *= 0.5;
+    freq *= 2.12;
+  }
+  return value / norm;
 }
 
 export interface PlanetTextureBundle {
-  map: THREE.Texture;
-  bumpMap?: THREE.Texture;
-  specularMap?: THREE.Texture;
-  cloudsMap?: THREE.Texture;
-  ringMap?: THREE.Texture;
-  nightMap?: THREE.Texture;
+  map: THREE.CanvasTexture;
+  bumpMap?: THREE.CanvasTexture;
+  specularMap?: THREE.CanvasTexture;
+  cloudsMap?: THREE.CanvasTexture;
+  ringMap?: THREE.CanvasTexture;
+  nightMap?: THREE.CanvasTexture;
 }
 
 const textureCache: Record<string, PlanetTextureBundle> = {};
+let asteroidTextureCache: { map: THREE.CanvasTexture; bumpMap: THREE.CanvasTexture } | null = null;
 
-// Public-domain NASA & USGS spacecraft planetary texture sources (with seamless procedural fallback)
-const NASA_TEXTURE_ARCHIVE: Record<string, { map?: string; bump?: string; clouds?: string; specular?: string }> = {
+// Public-domain spacecraft & observatory maps that seamlessly paint onto the active CanvasTexture
+const NASA_TEXTURE_ARCHIVE: Record<
+  string,
+  { map?: string; bump?: string; clouds?: string; specular?: string }
+> = {
   earth: {
     map: 'https://unpkg.com/three@0.165.0/examples/textures/planets/earth_atmos_2048.jpg',
     clouds: 'https://unpkg.com/three@0.165.0/examples/textures/planets/earth_clouds_1024.png',
@@ -57,68 +108,143 @@ const NASA_TEXTURE_ARCHIVE: Record<string, { map?: string; bump?: string; clouds
 };
 
 /**
- * Asynchronously checks and applies real NASA satellite maps when online,
- * smoothly enhancing the material without interrupting the scene.
+ * Loads real spacecraft imagery into the ALREADY-BOUND HTMLCanvasElement and sets
+ * `texture.needsUpdate = true`, so Three.js updates the live GPU material in place!
  */
-function tryLoadNasaTexture(planetId: string, bundle: PlanetTextureBundle) {
+function upgradeCanvasTextureFromUrl(url: string, targetTexture: THREE.CanvasTexture, invertForRoughness = false) {
   if (typeof window === 'undefined') return;
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.onload = () => {
+    const canvas = targetTexture.image as HTMLCanvasElement;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+    if (invertForRoughness) {
+      // Three.js earth_specular has white=ocean(shiny), black=land(rough).
+      // For PBR roughnessMap, we want ocean=dark(0.12 smooth) and land=bright(0.88 rough).
+      const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const d = imgData.data;
+      for (let i = 0; i < d.length; i += 4) {
+        const spec = d[i] / 255;
+        const rough = Math.floor((1.0 - spec * 0.82) * 255);
+        d[i] = rough;
+        d[i + 1] = rough;
+        d[i + 2] = rough;
+      }
+      ctx.putImageData(imgData, 0, 0);
+    }
+
+    targetTexture.needsUpdate = true;
+  };
+  img.onerror = () => {
+    // Keep our 3D spherical fractal procedural map
+  };
+  img.src = url;
+}
+
+function tryLoadNasaTexture(planetId: string, bundle: PlanetTextureBundle) {
   const urls = NASA_TEXTURE_ARCHIVE[planetId];
   if (!urls) return;
-
-  const loader = new THREE.TextureLoader();
-  loader.crossOrigin = 'anonymous';
-
-  if (urls.map) {
-    loader.load(
-      urls.map,
-      (tex) => {
-        tex.wrapS = THREE.RepeatWrapping;
-        tex.wrapT = THREE.ClampToEdgeWrapping;
-        tex.colorSpace = THREE.SRGBColorSpace;
-        bundle.map = tex;
-      },
-      undefined,
-      () => {
-        // Silent fallback to our ultra-realistic 2K procedural map
-      }
-    );
+  if (urls.map && bundle.map) {
+    upgradeCanvasTextureFromUrl(urls.map, bundle.map, false);
   }
-
-  if (urls.clouds) {
-    loader.load(
-      urls.clouds,
-      (cloudTex) => {
-        cloudTex.wrapS = THREE.RepeatWrapping;
-        cloudTex.wrapT = THREE.ClampToEdgeWrapping;
-        bundle.cloudsMap = cloudTex;
-      },
-      undefined,
-      () => {}
-    );
+  if (urls.clouds && bundle.cloudsMap) {
+    upgradeCanvasTextureFromUrl(urls.clouds, bundle.cloudsMap, false);
   }
-
-  if (urls.specular) {
-    loader.load(
-      urls.specular,
-      (specTex) => {
-        specTex.wrapS = THREE.RepeatWrapping;
-        specTex.wrapT = THREE.ClampToEdgeWrapping;
-        bundle.specularMap = specTex;
-      },
-      undefined,
-      () => {}
-    );
+  if (urls.specular && bundle.specularMap) {
+    upgradeCanvasTextureFromUrl(urls.specular, bundle.specularMap, true);
   }
 }
 
-export function getPlanetTextures(planetId: string): PlanetTextureBundle {
-  if (textureCache[planetId]) {
-    return textureCache[planetId];
+function configureSphericalTexture(tex: THREE.CanvasTexture, isColor = true): THREE.CanvasTexture {
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.anisotropy = 8;
+  if (isColor) {
+    tex.colorSpace = THREE.SRGBColorSpace;
   }
+  tex.needsUpdate = true;
+  return tex;
+}
 
-  // High-Resolution 2048x1024 generation canvas for photorealistic depth
-  const width = 2048;
-  const height = 1024;
+// Helper to stamp 3D-projected impact craters with ejecta rays onto equirectangular maps
+function stampRealisticCraters(
+  ctx: CanvasRenderingContext2D,
+  bumpCtx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  count: number,
+  seed: number,
+  hasRays = true
+) {
+  for (let i = 0; i < count; i++) {
+    const h1 = hash3(i, seed, 11, seed);
+    const h2 = hash3(i, seed, 29, seed);
+    const h3 = hash3(i, seed, 47, seed);
+
+    const cx = h1 * width;
+    const cy = (0.08 + h2 * 0.84) * height;
+    const r = 4 + Math.pow(h3, 2.6) * 44;
+
+    // Ejecta blanket & bright rays for major young impact craters
+    if (hasRays && r > 22 && i % 4 === 0) {
+      ctx.save();
+      ctx.translate(cx, cy);
+      const rayCount = 12 + (i % 10);
+      for (let ray = 0; ray < rayCount; ray++) {
+        const ang = (ray / rayCount) * Math.PI * 2 + (h1 - 0.5) * 0.3;
+        const rayLen = r * (2.2 + hash3(i, ray, 99, seed) * 2.5);
+        const grad = ctx.createLinearGradient(0, 0, Math.cos(ang) * rayLen, Math.sin(ang) * rayLen);
+        grad.addColorStop(0, 'rgba(235, 240, 248, 0.32)');
+        grad.addColorStop(0.4, 'rgba(215, 222, 232, 0.14)');
+        grad.addColorStop(1, 'rgba(200, 205, 215, 0)');
+        ctx.strokeStyle = grad;
+        ctx.lineWidth = 1.5 + (ray % 3);
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(ang) * r * 0.8, Math.sin(ang) * r * 0.8);
+        ctx.lineTo(Math.cos(ang) * rayLen, Math.sin(ang) * rayLen);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    // Albedo crater bowl + sunlit/shadowed rim + central peak
+    const g = ctx.createRadialGradient(cx - r * 0.12, cy - r * 0.1, r * 0.05, cx, cy, r * 1.25);
+    g.addColorStop(0, 'rgba(185, 190, 200, 0.55)'); // Central rebound peak
+    g.addColorStop(0.18, 'rgba(38, 42, 48, 0.78)'); // Deep shadowed floor
+    g.addColorStop(0.68, 'rgba(55, 60, 68, 0.65)'); // Inner wall
+    g.addColorStop(0.84, 'rgba(220, 225, 235, 0.75)'); // Raised rim crest
+    g.addColorStop(1, 'rgba(128, 128, 128, 0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r * 1.25, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Bump elevation: deep bowl (black), sharp raised rim (white), central peak (bright)
+    const bg = bumpCtx.createRadialGradient(cx, cy, r * 0.04, cx, cy, r * 1.22);
+    bg.addColorStop(0, '#d8d8d8'); // Central rebound peak
+    bg.addColorStop(0.16, '#0a0a0a'); // Deep basin floor
+    bg.addColorStop(0.66, '#1c1c1c');
+    bg.addColorStop(0.86, '#ffffff'); // High sharp rim wall
+    bg.addColorStop(1, 'rgba(128, 128, 128, 0)');
+    bumpCtx.fillStyle = bg;
+    bumpCtx.beginPath();
+    bumpCtx.arc(cx, cy, r * 1.22, 0, Math.PI * 2);
+    bumpCtx.fill();
+  }
+}
+
+/**
+ * Dedicated photorealistic chondrite/silicate asteroid rock & crater bump texture
+ */
+export function getAsteroidRockTextures(): { map: THREE.CanvasTexture; bumpMap: THREE.CanvasTexture } {
+  if (asteroidTextureCache) return asteroidTextureCache;
+
+  const width = 512;
+  const height = 256;
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
@@ -129,279 +255,357 @@ export function getPlanetTextures(planetId: string): PlanetTextureBundle {
   bumpCanvas.height = height;
   const bumpCtx = bumpCanvas.getContext('2d')!;
 
-  // ==========================================================================
-  // 1. THE SUN (SOL) — Dynamic Granulation, Plasma Convection & Magnetic Spots
-  // ==========================================================================
-  if (planetId === 'sun') {
+  const imgData = ctx.createImageData(width, height);
+  const bumpData = bumpCtx.createImageData(width, height);
+
+  for (let y = 0; y < height; y++) {
+    const phi = (y / height - 0.5) * Math.PI;
+    const cosPhi = Math.cos(phi);
+    const sinPhi = Math.sin(phi);
+    for (let x = 0; x < width; x++) {
+      const theta = (x / width) * Math.PI * 2;
+      const sx = cosPhi * Math.cos(theta);
+      const sy = sinPhi;
+      const sz = cosPhi * Math.sin(theta);
+
+      const base = fbm3D(sx * 4.5, sy * 4.5, sz * 4.5, 5, 601);
+      const ridge = ridged3D(sx * 9.0, sy * 9.0, sz * 9.0, 4, 619);
+      const grain = noise3D(sx * 28, sy * 28, sz * 28, 631);
+
+      const lithic = base * 0.52 + ridge * 0.33 + grain * 0.15;
+      const v = Math.floor(52 + lithic * 135);
+      const idx = (y * width + x) * 4;
+
+      // Carbonaceous & silicate warm-grey mineral variation
+      imgData.data[idx] = Math.min(255, v + 6);
+      imgData.data[idx + 1] = Math.min(255, v + 3);
+      imgData.data[idx + 2] = Math.min(255, v - 2);
+      imgData.data[idx + 3] = 255;
+
+      const bv = Math.min(255, Math.max(0, Math.floor(lithic * 255)));
+      bumpData.data[idx] = bv;
+      bumpData.data[idx + 1] = bv;
+      bumpData.data[idx + 2] = bv;
+      bumpData.data[idx + 3] = 255;
+    }
+  }
+  ctx.putImageData(imgData, 0, 0);
+  bumpCtx.putImageData(bumpData, 0, 0);
+
+  // Stamp micro-craters and regolith pits onto the asteroid surface
+  stampRealisticCraters(ctx, bumpCtx, width, height, 65, 709, false);
+
+  asteroidTextureCache = {
+    map: configureSphericalTexture(new THREE.CanvasTexture(canvas), true),
+    bumpMap: configureSphericalTexture(new THREE.CanvasTexture(bumpCanvas), false),
+  };
+  return asteroidTextureCache;
+}
+
+export function getPlanetTextures(planetId: string): PlanetTextureBundle {
+  if (textureCache[planetId]) {
+    return textureCache[planetId];
+  }
+
+  // 1024x512 3D-spherical equirectangular canvas (fast generation + seamless NASA 2K upgrade)
+  const width = 1024;
+  const height = 512;
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d')!;
+
+  const bumpCanvas = document.createElement('canvas');
+  bumpCanvas.width = width;
+  bumpCanvas.height = height;
+  const bumpCtx = bumpCanvas.getContext('2d')!;
+
+  // Helper to iterate over 3D unit sphere coordinates (sx, sy, sz) for zero-seam mapping
+  const generateSphericalPixels = (
+    pixelFn: (
+      sx: number,
+      sy: number,
+      sz: number,
+      lon: number,
+      lat: number
+    ) => { r: number; g: number; b: number; bump: number; spec?: number }
+  ): { specCanvas?: HTMLCanvasElement } => {
     const imgData = ctx.createImageData(width, height);
-    const data = imgData.data;
+    const bumpData = bumpCtx.createImageData(width, height);
+    let specCanvas: HTMLCanvasElement | undefined;
+    let specCtx: CanvasRenderingContext2D | undefined;
+    let specData: ImageData | undefined;
 
     for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const nx = (x / width) * 28;
-        const ny = (y / height) * 14;
-        const n = fbmNoise(nx, ny, 6, 11);
-        const fine = fbmNoise(nx * 4, ny * 4, 3, 29);
-        const val = n * 0.62 + fine * 0.38;
+      const lat = 0.5 - y / height; // +0.5 (North Pole) to -0.5 (South Pole)
+      const phi = lat * Math.PI;
+      const cosPhi = Math.cos(phi);
+      const sinPhi = Math.sin(phi);
 
+      for (let x = 0; x < width; x++) {
+        const lon = (x / width - 0.5) * Math.PI * 2; // -PI to +PI
+        const sx = cosPhi * Math.cos(lon);
+        const sy = sinPhi;
+        const sz = cosPhi * Math.sin(lon);
+
+        const res = pixelFn(sx, sy, sz, lon, lat);
         const idx = (y * width + x) * 4;
-        // High-energy incandescent solar photosphere (deep fiery orange to incandescent yellow-white)
-        data[idx] = Math.min(255, Math.floor(220 + val * 55));
-        data[idx + 1] = Math.min(255, Math.floor(70 + val * 175));
-        data[idx + 2] = Math.min(255, Math.floor(5 + Math.pow(val, 2.4) * 210));
-        data[idx + 3] = 255;
+
+        imgData.data[idx] = Math.min(255, Math.max(0, Math.floor(res.r)));
+        imgData.data[idx + 1] = Math.min(255, Math.max(0, Math.floor(res.g)));
+        imgData.data[idx + 2] = Math.min(255, Math.max(0, Math.floor(res.b)));
+        imgData.data[idx + 3] = 255;
+
+        const bv = Math.min(255, Math.max(0, Math.floor(res.bump)));
+        bumpData.data[idx] = bv;
+        bumpData.data[idx + 1] = bv;
+        bumpData.data[idx + 2] = bv;
+        bumpData.data[idx + 3] = 255;
+
+        if (res.spec !== undefined) {
+          if (!specCanvas) {
+            specCanvas = document.createElement('canvas');
+            specCanvas.width = width;
+            specCanvas.height = height;
+            specCtx = specCanvas.getContext('2d')!;
+            specData = specCtx.createImageData(width, height);
+          }
+          const sv = Math.min(255, Math.max(0, Math.floor(res.spec)));
+          specData!.data[idx] = sv;
+          specData!.data[idx + 1] = sv;
+          specData!.data[idx + 2] = sv;
+          specData!.data[idx + 3] = 255;
+        }
       }
     }
     ctx.putImageData(imgData, 0, 0);
+    bumpCtx.putImageData(bumpData, 0, 0);
+    if (specCtx && specData) {
+      specCtx.putImageData(specData, 0, 0);
+    }
+    return { specCanvas };
+  };
 
-    // Realistic Magnetic Sunspot Groups with Umbra, Penumbra & Bright Faculae Rims
-    const sunspots = [
-      { x: 480, y: 420, r: 28 },
-      { x: 535, y: 435, r: 16 },
-      { x: 1280, y: 590, r: 35 },
-      { x: 1340, y: 570, r: 20 },
-      { x: 1640, y: 380, r: 24 },
-    ];
-    sunspots.forEach((s) => {
-      const grad = ctx.createRadialGradient(s.x, s.y, s.r * 0.2, s.x, s.y, s.r * 2.4);
-      grad.addColorStop(0, '#120400'); // Dark umbra core
-      grad.addColorStop(0.42, '#782508'); // Penumbra filaments
-      grad.addColorStop(0.72, 'rgba(254, 240, 138, 0.7)'); // Bright magnetic faculae
-      grad.addColorStop(1, 'rgba(245, 158, 11, 0)');
-      ctx.fillStyle = grad;
-      ctx.beginPath();
-      ctx.arc(s.x, s.y, s.r * 2.4, 0, Math.PI * 2);
-      ctx.fill();
+  // ==========================================================================
+  // 1. THE SUN (SOL) — High-Resolution Convective Granulation & Sunspot Map
+  // (Supplemented in CosmicExplorer3D by a live animated GLSL Photosphere Shader)
+  // ==========================================================================
+  if (planetId === 'sun') {
+    generateSphericalPixels((sx, sy, sz) => {
+      const qx = fbm3D(sx * 6, sy * 6, sz * 6, 4, 11);
+      const qy = fbm3D(sx * 6 + 5.2, sy * 6 + 1.3, sz * 6 + 2.8, 4, 23);
+      const cells = ridged3D(sx * 14 + qx * 2.2, sy * 14 + qy * 2.2, sz * 14, 5, 37);
+      const supergranules = fbm3D(sx * 4, sy * 4, sz * 4, 4, 51);
+      const val = cells * 0.65 + supergranules * 0.35;
+
+      // Magnetic sunspot active regions near +/- 15-25 deg solar latitude
+      const spotNoise = fbm3D(sx * 5.5, sy * 5.5, sz * 5.5, 4, 89);
+      const spotMask = Math.abs(sy) > 0.12 && Math.abs(sy) < 0.48 && spotNoise < 0.24
+        ? Math.max(0, (0.24 - spotNoise) * 6.5)
+        : 0;
+
+      const r = (235 + val * 45) * (1 - spotMask * 0.85);
+      const g = (65 + Math.pow(val, 1.15) * 185) * (1 - spotMask * 0.92);
+      const b = (8 + Math.pow(val, 2.6) * 235) * (1 - spotMask * 0.95);
+      return { r, g, b, bump: val * 255 };
     });
 
-    const map = new THREE.CanvasTexture(canvas);
-    map.wrapS = THREE.RepeatWrapping;
-    map.wrapT = THREE.ClampToEdgeWrapping;
+    const map = configureSphericalTexture(new THREE.CanvasTexture(canvas), true);
     textureCache[planetId] = { map };
     return textureCache[planetId];
   }
 
   // ==========================================================================
-  // 2. MERCURY — Heavily Cratered Silicate Regolith, Caloris Basin & Ejecta Rays
+  // 2. MERCURY — Silicate Regolith, Caloris Impact Basin, Scarps & Ray Craters
   // ==========================================================================
   if (planetId === 'mercury') {
-    const imgData = ctx.createImageData(width, height);
-    const bumpData = bumpCtx.createImageData(width, height);
+    generateSphericalPixels((sx, sy, sz) => {
+      const warp = fbm3D(sx * 3.5, sy * 3.5, sz * 3.5, 4, 101);
+      const highlands = fbm3D(sx * 7 + warp, sy * 7 + warp, sz * 7, 5, 113);
+      const ridges = ridged3D(sx * 12, sy * 12, sz * 12, 4, 127);
 
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const n = fbmNoise((x / width) * 22, (y / height) * 11, 5, 42);
-        const base = Math.floor(92 + n * 78);
-        const idx = (y * width + x) * 4;
+      // Caloris Basin giant impact plain
+      const distCaloris = Math.hypot(sx - 0.65, sy - 0.28, sz - 0.68);
+      const calorisMask = distCaloris < 0.42 ? Math.cos((distCaloris / 0.42) * Math.PI * 0.5) : 0;
 
-        imgData.data[idx] = base + 5;
-        imgData.data[idx + 1] = base + 2;
-        imgData.data[idx + 2] = base - 3;
-        imgData.data[idx + 3] = 255;
+      const h = highlands * 0.58 + ridges * 0.42 - calorisMask * 0.18;
+      const base = 76 + h * 108;
+      // Subtle warm bronze-slate MESSENGER color calibration
+      return {
+        r: base + 7,
+        g: base + 3,
+        b: base - 4,
+        bump: Math.max(0, Math.min(255, h * 245)),
+      };
+    });
 
-        bumpData.data[idx] = base;
-        bumpData.data[idx + 1] = base;
-        bumpData.data[idx + 2] = base;
-        bumpData.data[idx + 3] = 255;
-      }
-    }
-    ctx.putImageData(imgData, 0, 0);
-    bumpCtx.putImageData(bumpData, 0, 0);
+    stampRealisticCraters(ctx, bumpCtx, width, height, 240, 202, true);
 
-    // Paint authentic impact craters and ejecta rays
-    for (let i = 0; i < 180; i++) {
-      const cx = (i * 347) % width;
-      const cy = 60 + ((i * 227) % (height - 120));
-      const r = 6 + (i % 7) * 7;
-
-      // Crater floor & raised rim
-      const g = ctx.createRadialGradient(cx, cy, r * 0.18, cx, cy, r * 1.3);
-      g.addColorStop(0, 'rgba(45, 50, 58, 0.88)');
-      g.addColorStop(0.78, 'rgba(195, 200, 210, 0.82)');
-      g.addColorStop(1, 'rgba(120, 120, 125, 0)');
-      ctx.fillStyle = g;
-      ctx.beginPath();
-      ctx.arc(cx, cy, r * 1.3, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Bump map depression & rim height
-      const bg = bumpCtx.createRadialGradient(cx, cy, r * 0.1, cx, cy, r * 1.2);
-      bg.addColorStop(0, '#101010');
-      bg.addColorStop(0.85, '#ffffff');
-      bg.addColorStop(1, 'rgba(128,128,128,0)');
-      bumpCtx.fillStyle = bg;
-      bumpCtx.beginPath();
-      bumpCtx.arc(cx, cy, r * 1.2, 0, Math.PI * 2);
-      bumpCtx.fill();
-    }
-
-    const map = new THREE.CanvasTexture(canvas);
-    const bumpMap = new THREE.CanvasTexture(bumpCanvas);
+    const map = configureSphericalTexture(new THREE.CanvasTexture(canvas), true);
+    const bumpMap = configureSphericalTexture(new THREE.CanvasTexture(bumpCanvas), false);
     textureCache[planetId] = { map, bumpMap };
     return textureCache[planetId];
   }
 
   // ==========================================================================
-  // 3. VENUS — Swirling Sulfuric Acid Cloud Decks & Chevron Wave Patterns
+  // 3. VENUS — Super-Rotating Sulfuric Acid Cloud Decks & Polar Vortex Chevrons
   // ==========================================================================
   if (planetId === 'venus') {
-    const imgData = ctx.createImageData(width, height);
-    for (let y = 0; y < height; y++) {
-      const lat = (y / height - 0.5) * 2;
-      for (let x = 0; x < width; x++) {
-        // High-altitude V-shaped chevron cloud wave
-        const chevron = Math.abs(lat) * 3.2;
-        const nx = (x / width) * 12 + chevron;
-        const ny = (y / height) * 16;
-        const n = fbmNoise(nx, ny, 6, 77);
+    generateSphericalPixels((_sx, sy, _sz, lon, lat) => {
+      // Akatsuki UV/Visible chevron wave distortion along equator
+      const chevron = Math.abs(lat) * 4.2 + Math.sin(lat * Math.PI * 3) * 0.6;
+      const rotLon = lon + chevron;
+      const wx = Math.cos(lat * Math.PI) * Math.cos(rotLon);
+      const wz = Math.cos(lat * Math.PI) * Math.sin(rotLon);
 
-        const idx = (y * width + x) * 4;
-        imgData.data[idx] = Math.min(255, Math.floor(205 + n * 50));
-        imgData.data[idx + 1] = Math.min(255, Math.floor(155 + n * 65));
-        imgData.data[idx + 2] = Math.min(255, Math.floor(75 + n * 65));
-        imgData.data[idx + 3] = 255;
-      }
-    }
-    ctx.putImageData(imgData, 0, 0);
-    const map = new THREE.CanvasTexture(canvas);
-    textureCache[planetId] = { map };
+      const warp = fbm3D(wx * 3.2, sy * 5.5, wz * 3.2, 5, 307);
+      const streaks = fbm3D(wx * 5.5 + warp * 1.8, sy * 14, wz * 5.5 + warp * 1.8, 6, 319);
+      const bands = Math.cos(lat * Math.PI * 2.2) * 0.15;
+      const c = Math.min(1, Math.max(0, streaks * 0.82 + bands + 0.08));
+
+      // Creamy golden-amber sulfur dioxide cloud palette
+      const r = 185 + c * 68;
+      const g = 132 + Math.pow(c, 1.15) * 88;
+      const b = 58 + Math.pow(c, 1.45) * 82;
+      return { r, g, b, bump: c * 180 };
+    });
+
+    const map = configureSphericalTexture(new THREE.CanvasTexture(canvas), true);
+    const bumpMap = configureSphericalTexture(new THREE.CanvasTexture(bumpCanvas), false);
+    textureCache[planetId] = { map, bumpMap };
     return textureCache[planetId];
   }
 
   // ==========================================================================
-  // 4. EARTH — Realistic Continents, Bathymetric Oceans, Specular Water & 3D Clouds
+  // 4. EARTH — Blue Marble Continents, Bathymetry, Roughness Map & 3D Cyclones
+  // (Automatically upgrades in-place to 2K NASA Blue Marble when online)
   // ==========================================================================
   if (planetId === 'earth') {
-    // 1. Bathymetric deep ocean gradient
-    const oceanGrad = ctx.createLinearGradient(0, 0, 0, height);
-    oceanGrad.addColorStop(0, '#082f49');
-    oceanGrad.addColorStop(0.25, '#0284c7');
-    oceanGrad.addColorStop(0.5, '#0369a1');
-    oceanGrad.addColorStop(0.75, '#0284c7');
-    oceanGrad.addColorStop(1, '#082f49');
-    ctx.fillStyle = oceanGrad;
-    ctx.fillRect(0, 0, width, height);
+    // Seeded continental landmass centers on the 3D unit sphere
+    const continentSeeds = [
+      // North America
+      { x: -0.18, y: 0.68, z: 0.71, r: 0.46, weight: 0.48 },
+      { x: -0.05, y: 0.42, z: 0.90, r: 0.34, weight: 0.38 },
+      // South America
+      { x: 0.32, y: -0.28, z: 0.90, r: 0.38, weight: 0.46 },
+      { x: 0.25, y: -0.58, z: 0.77, r: 0.28, weight: 0.38 },
+      // Eurasia
+      { x: 0.68, y: 0.62, z: -0.38, r: 0.56, weight: 0.52 },
+      { x: 0.25, y: 0.55, z: -0.79, r: 0.58, weight: 0.54 },
+      { x: -0.35, y: 0.48, z: -0.80, r: 0.48, weight: 0.45 },
+      // Africa
+      { x: 0.82, y: 0.12, z: -0.55, r: 0.46, weight: 0.50 },
+      { x: 0.78, y: -0.32, z: -0.53, r: 0.34, weight: 0.44 },
+      // Australia
+      { x: -0.68, y: -0.42, z: -0.60, r: 0.28, weight: 0.44 },
+      // Antarctica
+      { x: 0.0, y: -0.98, z: 0.0, r: 0.45, weight: 0.55 },
+    ];
 
-    // Specular canvas: pure white (#ffffff) for oceans (reflects sunlight), black for land
-    const specCanvas = document.createElement('canvas');
-    specCanvas.width = width;
-    specCanvas.height = height;
-    const specCtx = specCanvas.getContext('2d')!;
-    specCtx.fillStyle = '#ffffff'; // Oceans reflect light!
-    specCtx.fillRect(0, 0, width, height);
+    const { specCanvas } = generateSphericalPixels((sx, sy, sz, _lon, lat) => {
+      const warpX = fbm3D(sx * 3.8, sy * 3.8, sz * 3.8, 4, 401) - 0.5;
+      const warpY = fbm3D(sx * 3.8 + 4.1, sy * 3.8 + 2.3, sz * 3.8, 4, 419) - 0.5;
+      const detail = fbm3D((sx + warpX * 0.35) * 7.5, (sy + warpY * 0.35) * 7.5, sz * 7.5, 6, 433);
+      const mountains = ridged3D(sx * 16, sy * 16, sz * 16, 5, 449);
 
-    bumpCtx.fillStyle = '#111111';
-    bumpCtx.fillRect(0, 0, width, height);
-
-    // Helper to paint organic multi-toned continents (coastal shelf + lush vegetation + desert interiors)
-    const drawContinent = (points: [number, number][], hasDesert = false) => {
-      // Coastal shallow turquoise shelf
-      ctx.save();
-      ctx.shadowColor = '#38bdf8';
-      ctx.shadowBlur = 18;
-      ctx.fillStyle = '#166534';
-      ctx.beginPath();
-      points.forEach(([px, py], i) => {
-        const sx = px * 2;
-        const sy = py * 2;
-        if (i === 0) ctx.moveTo(sx, sy);
-        else ctx.lineTo(sx, sy);
-      });
-      ctx.closePath();
-      ctx.fill();
-      ctx.restore();
-
-      // Interior biome (desert / mountain ranges)
-      if (hasDesert) {
-        ctx.fillStyle = '#b45309';
-        ctx.beginPath();
-        const cx = points.reduce((s, p) => s + p[0], 0) / points.length;
-        const cy = points.reduce((s, p) => s + p[1], 0) / points.length;
-        points.forEach(([px, py], i) => {
-          const ix = (cx + (px - cx) * 0.58) * 2;
-          const iy = (cy + (py - cy) * 0.58) * 2;
-          if (i === 0) ctx.moveTo(ix, iy);
-          else ctx.lineTo(ix, iy);
-        });
-        ctx.closePath();
-        ctx.fill();
+      let mask = 0;
+      for (const c of continentSeeds) {
+        const d = Math.hypot(sx - c.x, sy - c.y, sz - c.z);
+        if (d < c.r) {
+          const falloff = Math.cos((d / c.r) * Math.PI * 0.5);
+          mask = Math.max(mask, falloff * c.weight);
+        }
       }
 
-      // Land is matte in specular map (black)
-      specCtx.fillStyle = '#0a0a0a';
-      specCtx.beginPath();
-      points.forEach(([px, py], i) => {
-        if (i === 0) specCtx.moveTo(px * 2, py * 2);
-        else specCtx.lineTo(px * 2, py * 2);
-      });
-      specCtx.closePath();
-      specCtx.fill();
+      const elevation = mask + detail * 0.58 - 0.48;
+      const absLat = Math.abs(lat) * 2; // 0 at equator, 1 at poles
 
-      // Elevation bump
-      bumpCtx.fillStyle = '#c5c5c5';
-      bumpCtx.beginPath();
-      points.forEach(([px, py], i) => {
-        if (i === 0) bumpCtx.moveTo(px * 2, py * 2);
-        else bumpCtx.lineTo(px * 2, py * 2);
-      });
-      bumpCtx.closePath();
-      bumpCtx.fill();
-    };
-
-    // Authentic continent coordinates
-    // North America & Canada
-    drawContinent([
-      [110, 75], [230, 60], [280, 115], [240, 185], [195, 225], [160, 195], [105, 130],
-    ], true);
-    // South America (Amazon Basin & Andes)
-    drawContinent([
-      [235, 240], [315, 265], [335, 325], [290, 420], [258, 435], [245, 330],
-    ], false);
-    // Greenland
-    drawContinent([
-      [310, 40], [385, 36], [370, 88], [320, 82],
-    ], false);
-    // Eurasia & Mediterranean
-    drawContinent([
-      [465, 80], [560, 65], [760, 65], [890, 95], [860, 185], [750, 225], [690, 245], [655, 195], [585, 180], [495, 155], [455, 125],
-    ], true);
-    // Africa (Sahara desert & Savanna)
-    drawContinent([
-      [460, 175], [570, 175], [625, 235], [600, 345], [560, 398], [515, 340], [455, 245],
-    ], true);
-    // Australia & New Zealand
-    drawContinent([
-      [770, 315], [870, 310], [885, 375], [810, 395], [765, 355],
-    ], true);
-
-    // Polar Ice Caps (Arctic & Antarctica)
-    ctx.fillStyle = '#f8fafc';
-    ctx.fillRect(0, 0, width, 48);
-    ctx.fillRect(0, height - 76, width, 76);
-
-    // Fine terrain elevation noise
-    const imgData = ctx.getImageData(0, 0, width, height);
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const n = (fbmNoise((x / width) * 36, (y / height) * 18, 4, 91) - 0.5) * 32;
-        const idx = (y * width + x) * 4;
-        imgData.data[idx] = Math.min(255, Math.max(0, imgData.data[idx] + n));
-        imgData.data[idx + 1] = Math.min(255, Math.max(0, imgData.data[idx + 1] + n));
-        imgData.data[idx + 2] = Math.min(255, Math.max(0, imgData.data[idx + 2] + n));
+      // Polar ice caps with fractal sea-ice edge
+      if (absLat + (detail - 0.5) * 0.18 > 0.84) {
+        return {
+          r: 242 + detail * 12,
+          g: 248 + detail * 7,
+          b: 255,
+          bump: 145 + mountains * 60,
+          spec: 110, // Moderately reflective ice
+        };
       }
-    }
-    ctx.putImageData(imgData, 0, 0);
 
-    // Transparent 3D Atmospheric Cloud Layer with Swirling Cyclonic Storm
+      if (elevation < 0) {
+        // Bathymetric Ocean: Deep abyssal trenches to turquoise coral continental shelves
+        const depth = Math.min(1, Math.max(0, -elevation * 3.8));
+        const shelf = Math.pow(1 - depth, 3.2);
+        const r = 4 + shelf * 28;
+        const g = 28 + (1 - depth) * 52 + shelf * 85;
+        const b = 68 + (1 - depth) * 95 + shelf * 55;
+        return {
+          r,
+          g,
+          b,
+          bump: 10, // Smooth ocean surface
+          spec: 32, // Low roughness (0.12) => shiny sun-glint ocean!
+        };
+      }
+
+      // Land Biomes: Coastal lowlands, tropical forests, deserts/savannas, and snow-capped mountain ranges
+      const h = Math.min(1, elevation * 2.6 + mountains * 0.38);
+      const aridity = fbm3D(sx * 5.2, sy * 5.2, sz * 5.2, 4, 467) + Math.exp(-Math.pow((absLat - 0.28) * 5.5, 2)) * 0.42;
+
+      let r = 34;
+      let g = 98;
+      let b = 42;
+
+      if (h > 0.72) {
+        // High Alpine Snow & Exposed Granite Peaks
+        const snow = Math.min(1, (h - 0.72) * 3.5);
+        r = 115 + snow * 130;
+        g = 110 + snow * 135;
+        b = 105 + snow * 145;
+      } else if (aridity > 0.78 && absLat < 0.58) {
+        // Sahara / Arabian / Australian ochre sand & sandstone desert
+        const dTone = (aridity - 0.78) * 2.5;
+        r = Math.min(225, 165 + dTone * 55 + mountains * 25);
+        g = Math.min(190, 122 + dTone * 42 + mountains * 15);
+        b = Math.min(135, 68 + dTone * 28);
+      } else {
+        // Boreal / Temperate / Rainforest vegetation gradient
+        const lush = 1 - absLat * 0.65;
+        r = 26 + (1 - lush) * 48 + mountains * 32;
+        g = 68 + lush * 56 + detail * 28;
+        b = 24 + (1 - lush) * 25;
+      }
+
+      return {
+        r,
+        g,
+        b,
+        bump: Math.min(255, 65 + h * 190),
+        spec: 228, // High roughness (0.89) => matte continental land
+      };
+    });
+
+    // High-altitude dynamic 3D cloud deck with spiral typhoons & trade-wind bands
     const cloudCanvas = document.createElement('canvas');
     cloudCanvas.width = width;
     cloudCanvas.height = height;
     const cloudCtx = cloudCanvas.getContext('2d')!;
     const cloudImg = cloudCtx.createImageData(width, height);
+
     for (let y = 0; y < height; y++) {
+      const phi = (0.5 - y / height) * Math.PI;
+      const cosPhi = Math.cos(phi);
+      const sinPhi = Math.sin(phi);
       for (let x = 0; x < width; x++) {
-        const c = fbmNoise((x / width) * 16, (y / height) * 8, 5, 303);
-        const alpha = c > 0.51 ? Math.min(235, Math.floor((c - 0.51) * 580)) : 0;
+        const lon = (x / width - 0.5) * Math.PI * 2;
+        const sx = cosPhi * Math.cos(lon);
+        const sy = sinPhi;
+        const sz = cosPhi * Math.sin(lon);
+
+        const qx = fbm3D(sx * 4.5, sy * 4.5, sz * 4.5, 4, 503);
+        const qy = fbm3D(sx * 4.5 + 3.1, sy * 4.5 + 1.7, sz * 4.5, 4, 521);
+        const c = fbm3D(sx * 6.5 + qx * 1.6, sy * 9.5 + qy * 1.6, sz * 6.5, 5, 547);
+        const alpha = c > 0.47 ? Math.min(245, Math.floor(Math.pow((c - 0.47) / 0.53, 1.15) * 320)) : 0;
+
         const idx = (y * width + x) * 4;
         cloudImg.data[idx] = 255;
         cloudImg.data[idx + 1] = 255;
@@ -411,22 +615,10 @@ export function getPlanetTextures(planetId: string): PlanetTextureBundle {
     }
     cloudCtx.putImageData(cloudImg, 0, 0);
 
-    // Draw realistic swirling hurricane vortex in the Atlantic
-    cloudCtx.save();
-    cloudCtx.translate(520, 360);
-    for (let a = 0; a < 6; a++) {
-      cloudCtx.rotate(Math.PI / 3);
-      cloudCtx.fillStyle = 'rgba(255, 255, 255, 0.45)';
-      cloudCtx.beginPath();
-      cloudCtx.ellipse(32, 0, 48, 14, 0.3, 0, Math.PI * 2);
-      cloudCtx.fill();
-    }
-    cloudCtx.restore();
-
-    const map = new THREE.CanvasTexture(canvas);
-    const bumpMap = new THREE.CanvasTexture(bumpCanvas);
-    const cloudsMap = new THREE.CanvasTexture(cloudCanvas);
-    const specularMap = new THREE.CanvasTexture(specCanvas);
+    const map = configureSphericalTexture(new THREE.CanvasTexture(canvas), true);
+    const bumpMap = configureSphericalTexture(new THREE.CanvasTexture(bumpCanvas), false);
+    const cloudsMap = configureSphericalTexture(new THREE.CanvasTexture(cloudCanvas), true);
+    const specularMap = configureSphericalTexture(new THREE.CanvasTexture(specCanvas!), false);
 
     textureCache[planetId] = { map, bumpMap, cloudsMap, specularMap };
     tryLoadNasaTexture(planetId, textureCache[planetId]);
@@ -434,178 +626,203 @@ export function getPlanetTextures(planetId: string): PlanetTextureBundle {
   }
 
   // ==========================================================================
-  // 5. EARTH'S MOON — Basaltic Maria, Highlands & Tycho Ray Craters
+  // 5. EARTH'S MOON — Basaltic Maria, Anorthosite Highlands & Tycho Ray Craters
   // ==========================================================================
   if (planetId === 'moon') {
-    const imgData = ctx.createImageData(width, height);
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const n = fbmNoise((x / width) * 16, (y / height) * 8, 5, 55);
-        const isMare = n < 0.45;
-        const v = isMare ? Math.floor(70 + n * 95) : Math.floor(138 + n * 95);
-        const idx = (y * width + x) * 4;
-        imgData.data[idx] = v;
-        imgData.data[idx + 1] = v;
-        imgData.data[idx + 2] = v + 4;
-        imgData.data[idx + 3] = 255;
-      }
-    }
-    ctx.putImageData(imgData, 0, 0);
-    const map = new THREE.CanvasTexture(canvas);
-    textureCache[planetId] = { map, bumpMap: map };
+    generateSphericalPixels((sx, sy, sz) => {
+      const maria = fbm3D(sx * 2.8, sy * 2.8, sz * 2.8, 5, 557);
+      const detail = fbm3D(sx * 12, sy * 12, sz * 12, 5, 569);
+      const ridge = ridged3D(sx * 9, sy * 9, sz * 9, 4, 577);
+
+      const isMare = maria < 0.46;
+      const base = isMare
+        ? 58 + maria * 85 + detail * 28
+        : 125 + maria * 75 + ridge * 42 + detail * 22;
+
+      return {
+        r: base,
+        g: base - 1,
+        b: base - 3,
+        bump: isMare ? 45 + detail * 65 : 110 + ridge * 135,
+      };
+    });
+
+    stampRealisticCraters(ctx, bumpCtx, width, height, 220, 593, true);
+
+    const map = configureSphericalTexture(new THREE.CanvasTexture(canvas), true);
+    const bumpMap = configureSphericalTexture(new THREE.CanvasTexture(bumpCanvas), false);
+    textureCache[planetId] = { map, bumpMap };
     tryLoadNasaTexture(planetId, textureCache[planetId]);
     return textureCache[planetId];
   }
 
   // ==========================================================================
-  // 6. MARS — Rusty Iron-Oxide Regolith, Syrtis Major, Valles Marineris & Ice Caps
+  // 6. MARS — Hematite/Iron-Oxide Regolith, Syrtis Major Basalt, Valles Marineris
   // ==========================================================================
   if (planetId === 'mars') {
-    const imgData = ctx.createImageData(width, height);
-    const bumpData = bumpCtx.createImageData(width, height);
+    generateSphericalPixels((sx, sy, sz, _lon, lat) => {
+      const warp = fbm3D(sx * 3.5, sy * 3.5, sz * 3.5, 4, 641);
+      const terrain = fbm3D(sx * 6.5 + warp, sy * 6.5 + warp, sz * 6.5, 6, 653);
+      const basaltRegion = fbm3D(sx * 2.6, sy * 2.6, sz * 2.6, 4, 661);
+      const ridges = ridged3D(sx * 14, sy * 14, sz * 14, 5, 673);
 
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const n = fbmNoise((x / width) * 16, (y / height) * 8, 5, 64);
-        const darkBasalt = fbmNoise((x / width) * 6, (y / height) * 4, 3, 19);
-        const idx = (y * width + x) * 4;
-
-        // Blend rusty orange-red iron oxide dust with dark volcanic basalt (Syrtis Major)
-        const isDarkRegion = darkBasalt < 0.38 && y > 240 && y < 780;
-        const r = isDarkRegion ? Math.floor(100 + n * 55) : Math.floor(180 + n * 75);
-        const g = isDarkRegion ? Math.floor(48 + n * 35) : Math.floor(76 + n * 52);
-        const b = isDarkRegion ? Math.floor(34 + n * 25) : Math.floor(38 + n * 35);
-
-        imgData.data[idx] = Math.min(255, r);
-        imgData.data[idx + 1] = Math.min(255, g);
-        imgData.data[idx + 2] = Math.min(255, b);
-        imgData.data[idx + 3] = 255;
-
-        const bv = Math.floor(n * 255);
-        bumpData.data[idx] = bv;
-        bumpData.data[idx + 1] = bv;
-        bumpData.data[idx + 2] = bv;
-        bumpData.data[idx + 3] = 255;
+      // Polar CO2 & Water Ice Caps with layered spiral troughs
+      const absLat = Math.abs(lat) * 2;
+      if (absLat + (terrain - 0.5) * 0.14 > 0.89) {
+        return {
+          r: 245,
+          g: 238,
+          b: 232,
+          bump: 210 + ridges * 45,
+        };
       }
-    }
-    ctx.putImageData(imgData, 0, 0);
-    bumpCtx.putImageData(bumpData, 0, 0);
 
-    // Valles Marineris 4,000-km grand canyon rift
-    ctx.strokeStyle = 'rgba(58, 18, 10, 0.85)';
-    ctx.lineWidth = 14;
-    ctx.beginPath();
-    ctx.moveTo(720, 530);
-    ctx.bezierCurveTo(840, 545, 980, 520, 1110, 535);
-    ctx.stroke();
+      // Valles Marineris equatorial tectonic canyon system
+      const canyonDist = Math.abs(sy + 0.11 + Math.sin(sx * 4.5) * 0.035);
+      const inCanyon = sx > 0.15 && sx < 0.88 && canyonDist < 0.042;
+      const canyonDepth = inCanyon ? Math.cos((canyonDist / 0.042) * Math.PI * 0.5) : 0;
 
-    // Olympus Mons (25km shield volcano) and Tharsis Montes
-    [
-      { x: 420, y: 430, r: 42 },
-      { x: 520, y: 490, r: 26 },
-      { x: 560, y: 540, r: 26 },
-    ].forEach((v) => {
-      const vg = ctx.createRadialGradient(v.x, v.y, 4, v.x, v.y, v.r);
-      vg.addColorStop(0, '#381203');
-      vg.addColorStop(0.3, '#9a3412');
+      // Dark basaltic albedo features (Syrtis Major / Acidalia Planitia) vs bright ochre dust (Arabia Terra)
+      const darkFactor = basaltRegion < 0.43 ? Math.min(1, (0.43 - basaltRegion) * 4.2) : 0;
+      const h = terrain * 0.62 + ridges * 0.38 - canyonDepth * 0.55;
+
+      const r = (182 + h * 72) * (1 - darkFactor * 0.42) - canyonDepth * 65;
+      const g = (78 + h * 54) * (1 - darkFactor * 0.48) - canyonDepth * 35;
+      const b = (42 + h * 34) * (1 - darkFactor * 0.45) - canyonDepth * 20;
+
+      return {
+        r,
+        g,
+        b,
+        bump: Math.max(0, Math.min(255, h * 245)),
+      };
+    });
+
+    // Stamp Martian impact craters & Tharsis shield volcano calderas
+    stampRealisticCraters(ctx, bumpCtx, width, height, 145, 683, false);
+
+    // Olympus Mons & Tharsis Montes mega-volcanoes
+    const volcanoes = [
+      { x: width * 0.22, y: height * 0.39, r: 28 },
+      { x: width * 0.28, y: height * 0.46, r: 18 },
+      { x: width * 0.31, y: height * 0.51, r: 18 },
+      { x: width * 0.34, y: height * 0.56, r: 18 },
+    ];
+    volcanoes.forEach((v) => {
+      const vg = ctx.createRadialGradient(v.x, v.y, 2, v.x, v.y, v.r);
+      vg.addColorStop(0, '#2a0f05'); // Summit caldera
+      vg.addColorStop(0.22, '#9a3412');
+      vg.addColorStop(0.65, 'rgba(154, 52, 18, 0.45)');
       vg.addColorStop(1, 'rgba(180, 83, 9, 0)');
       ctx.fillStyle = vg;
       ctx.beginPath();
       ctx.arc(v.x, v.y, v.r, 0, Math.PI * 2);
       ctx.fill();
+
+      const bg = bumpCtx.createRadialGradient(v.x, v.y, 2, v.x, v.y, v.r);
+      bg.addColorStop(0, '#404040');
+      bg.addColorStop(0.2, '#ffffff');
+      bg.addColorStop(1, 'rgba(128,128,128,0)');
+      bumpCtx.fillStyle = bg;
+      bumpCtx.beginPath();
+      bumpCtx.arc(v.x, v.y, v.r, 0, Math.PI * 2);
+      bumpCtx.fill();
     });
 
-    // Polar Ice Caps
-    ctx.fillStyle = '#f8fafc';
-    ctx.fillRect(0, 0, width, 36);
-    ctx.fillRect(0, height - 36, width, 36);
-
-    const map = new THREE.CanvasTexture(canvas);
-    const bumpMap = new THREE.CanvasTexture(bumpCanvas);
+    const map = configureSphericalTexture(new THREE.CanvasTexture(canvas), true);
+    const bumpMap = configureSphericalTexture(new THREE.CanvasTexture(bumpCanvas), false);
     textureCache[planetId] = { map, bumpMap };
     return textureCache[planetId];
   }
 
   // ==========================================================================
-  // 7. JUPITER — Alternating Jet-Stream Cloud Belts & The Great Red Spot
+  // 7. JUPITER — Juno/Cassini Turbulent Zonal Belts, Festoons & Great Red Spot
   // ==========================================================================
   if (planetId === 'jupiter') {
-    const imgData = ctx.createImageData(width, height);
-
-    // Authentic Jovian latitude band palette from Hubble and Juno
     const bandPalette = [
-      [135, 115, 95],  // North Polar Region
-      [215, 195, 165], // North Temperate Zone
-      [165, 105, 72],  // North Temperate Belt
-      [238, 222, 195], // North Tropical Zone
-      [178, 92, 52],   // North Equatorial Belt
-      [245, 232, 205], // Equatorial Zone
-      [168, 78, 45],   // South Equatorial Belt (hosts Great Red Spot)
-      [235, 220, 190], // South Tropical Zone
-      [150, 115, 90],  // South Temperate Belt
-      [130, 110, 95],  // South Polar Region
+      [118, 104, 88],  // North Polar Cyclonic Hood
+      [198, 178, 148], // North North Temperate Zone
+      [148, 94, 62],   // North Temperate Belt
+      [232, 216, 188], // North Tropical Zone
+      [168, 82, 44],   // North Equatorial Belt (deep rust-brown with blue-grey festoons)
+      [242, 228, 202], // Equatorial Zone (ammonia ice plumes)
+      [158, 72, 38],   // South Equatorial Belt (hosts the Great Red Spot)
+      [236, 222, 196], // South Tropical Zone
+      [146, 102, 74],  // South Temperate Belt (hosts White Ovals)
+      [212, 196, 172], // South Temperate Zone
+      [116, 102, 88],  // South Polar Hood
     ];
 
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        // Turbulent jet-stream shear wave along latitude
-        const turbulence = (fbmNoise((x / width) * 22, (y / height) * 22, 5, 88) - 0.5) * 48;
-        const effectiveY = Math.min(height - 1, Math.max(0, y + turbulence));
-        const bandPos = (effectiveY / height) * (bandPalette.length - 1);
-        const bi = Math.floor(bandPos);
-        const frac = bandPos - bi;
-        const c1 = bandPalette[bi];
-        const c2 = bandPalette[Math.min(bandPalette.length - 1, bi + 1)];
+    generateSphericalPixels((sx, sy, sz, lon, lat) => {
+      // Kelvin-Helmholtz zonal jet stream shear & vortex turbulence
+      const jetShear = Math.sin(lat * Math.PI * 16) * 0.45;
+      const turb1 = fbm3D(sx * 8 + jetShear, sy * 22, sz * 8, 5, 701) - 0.5;
+      const turb2 = ridged3D(sx * 14, sy * 32, sz * 14, 4, 719) - 0.5;
 
-        const idx = (y * width + x) * 4;
-        imgData.data[idx] = Math.floor(c1[0] * (1 - frac) + c2[0] * frac);
-        imgData.data[idx + 1] = Math.floor(c1[1] * (1 - frac) + c2[1] * frac);
-        imgData.data[idx + 2] = Math.floor(c1[2] * (1 - frac) + c2[2] * frac);
-        imgData.data[idx + 3] = 255;
+      // Great Red Spot anticyclonic displacement around (lon = 0.35, lat = -0.16)
+      const dLon = Math.atan2(Math.sin(lon - 0.35), Math.cos(lon - 0.35));
+      const dLat = lat + 0.16;
+      const grsDist = Math.hypot(dLon * 0.62, dLat * 1.45);
+
+      if (grsDist < 0.14) {
+        const norm = grsDist / 0.14;
+        const swirl = Math.sin(norm * Math.PI * 5 + Math.atan2(dLat, dLon) * 2) * 0.12;
+        const core = 1 - norm + swirl;
+        return {
+          r: Math.min(255, 165 + core * 78),
+          g: Math.min(255, 42 + Math.pow(1 - core * 0.65, 2) * 125),
+          b: Math.min(255, 28 + Math.pow(1 - core * 0.75, 2) * 95),
+          bump: 160 + core * 85,
+        };
       }
-    }
-    ctx.putImageData(imgData, 0, 0);
 
-    // The Great Red Spot (Anticyclonic Storm Vortex with Concentric Edges)
-    ctx.save();
-    ctx.translate(1080, 650);
-    ctx.scale(1.7, 1.0);
-    const grs = ctx.createRadialGradient(0, 0, 8, 0, 0, 68);
-    grs.addColorStop(0, '#991b1b');
-    grs.addColorStop(0.55, '#dc2626');
-    grs.addColorStop(0.82, '#fdba74');
-    grs.addColorStop(1, 'rgba(251, 146, 60, 0)');
-    ctx.fillStyle = grs;
-    ctx.beginPath();
-    ctx.arc(0, 0, 68, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
+      const wakeDeflection = grsDist < 0.26 ? Math.exp(-grsDist * 10) * 0.06 : 0;
+      const effectiveLat = Math.min(
+        0.999,
+        Math.max(0, 0.5 - lat + turb1 * 0.065 + turb2 * 0.025 + wakeDeflection)
+      );
 
-    const map = new THREE.CanvasTexture(canvas);
-    textureCache[planetId] = { map };
+      const bandPos = effectiveLat * (bandPalette.length - 1);
+      const bi = Math.floor(bandPos);
+      const frac = bandPos - bi;
+      const fSmooth = frac * frac * (3 - 2 * frac);
+      const c1 = bandPalette[bi];
+      const c2 = bandPalette[Math.min(bandPalette.length - 1, bi + 1)];
+
+      const fineWave = (turb2 + 0.5) * 18;
+      return {
+        r: c1[0] * (1 - fSmooth) + c2[0] * fSmooth + fineWave,
+        g: c1[1] * (1 - fSmooth) + c2[1] * fSmooth + fineWave * 0.8,
+        b: c1[2] * (1 - fSmooth) + c2[2] * fSmooth + fineWave * 0.6,
+        bump: 110 + (turb1 + 0.5) * 90,
+      };
+    });
+
+    const map = configureSphericalTexture(new THREE.CanvasTexture(canvas), true);
+    const bumpMap = configureSphericalTexture(new THREE.CanvasTexture(bumpCanvas), false);
+    textureCache[planetId] = { map, bumpMap };
     return textureCache[planetId];
   }
 
   // ==========================================================================
-  // 8. SATURN — Golden Ammonia Bands & Cassini-Division Alpha Ring Texture
+  // 8. SATURN — Butterscotch Ammonia Bands, North Polar Hexagon & Cassini Rings
   // ==========================================================================
   if (planetId === 'saturn') {
-    const imgData = ctx.createImageData(width, height);
-    for (let y = 0; y < height; y++) {
-      const lat = y / height;
-      const bandWave = Math.sin(lat * Math.PI * 18) * 14 + Math.cos(lat * Math.PI * 7) * 18;
-      for (let x = 0; x < width; x++) {
-        const n = (fbmNoise((x / width) * 14, lat * 20, 3, 101) - 0.5) * 20;
-        const idx = (y * width + x) * 4;
-        imgData.data[idx] = Math.min(255, Math.max(0, Math.floor(222 + bandWave + n)));
-        imgData.data[idx + 1] = Math.min(255, Math.max(0, Math.floor(192 + bandWave * 0.85 + n)));
-        imgData.data[idx + 2] = Math.min(255, Math.max(0, Math.floor(134 + bandWave * 0.6 + n)));
-        imgData.data[idx + 3] = 255;
-      }
-    }
-    ctx.putImageData(imgData, 0, 0);
+    generateSphericalPixels((sx, sy, sz, _lon, lat) => {
+      const turb = (fbm3D(sx * 7, sy * 24, sz * 7, 4, 809) - 0.5) * 0.035;
+      const l = 0.5 - lat + turb;
 
-    // Multi-Band Ring Texture with authentic Cassini Division (dark gap) and C-ring transparency
+      const z1 = Math.sin(l * Math.PI * 16) * 14;
+      const z2 = Math.cos(l * Math.PI * 7) * 18;
+      const polarDarkening = Math.abs(lat) > 0.38 ? (Math.abs(lat) - 0.38) * 115 : 0;
+
+      const r = 224 + z1 + z2 - polarDarkening * 0.7;
+      const g = 194 + (z1 + z2) * 0.85 - polarDarkening * 0.45;
+      const b = 138 + (z1 + z2) * 0.55 + polarDarkening * 0.25;
+      return { r, g, b, bump: 128 + z1 * 2 };
+    });
+
+    // High-Definition Radial Ring System (D, C, B, Cassini Division, A, Encke Gap, F Ring)
     const ringCanvas = document.createElement('canvas');
     ringCanvas.width = 1024;
     ringCanvas.height = 1024;
@@ -613,96 +830,120 @@ export function getPlanetTextures(planetId: string): PlanetTextureBundle {
     const cx = 512;
     const cy = 512;
 
-    for (let r = 220; r <= 500; r += 1) {
-      const norm = (r - 220) / 280; // 0 = inner C ring, 1 = outer A ring
-      // Cassini Division dark gap around norm 0.65 - 0.72
-      const isCassiniGap = norm > 0.64 && norm < 0.73;
-      const isInnerCRing = norm < 0.22;
-      const fineRipple = Math.sin(norm * 220) * 0.16;
+    for (let r = 195; r <= 504; r += 0.75) {
+      const norm = (r - 195) / 309; // 0 = inner D/C ring, 1 = outer F ring
 
-      const alpha = isCassiniGap
-        ? 0.05
-        : isInnerCRing
-        ? 0.35
-        : Math.min(0.95, 0.78 + fineRipple);
+      // Authentic Cassini ring structure
+      const isCassiniDivision = norm > 0.635 && norm < 0.705;
+      const isEnckeGap = norm > 0.895 && norm < 0.912;
+      const isCRing = norm < 0.24;
+      const isBRing = norm >= 0.24 && norm <= 0.635;
 
-      const brightness = isCassiniGap ? 35 : Math.floor(220 + Math.sin(norm * 95) * 32);
-      rCtx.strokeStyle = `rgba(${brightness}, ${Math.floor(brightness * 0.9)}, ${Math.floor(
-        brightness * 0.72
-      )}, ${alpha})`;
-      rCtx.lineWidth = 1.8;
+      const highFreqWave =
+        Math.sin(norm * 340) * 0.08 +
+        Math.cos(norm * 890) * 0.05 +
+        Math.sin(norm * 140) * 0.1;
+
+      let alpha = 0.75;
+      let red = 225;
+      let green = 204;
+      let blue = 166;
+
+      if (isCassiniDivision) {
+        alpha = 0.04;
+        red = 40;
+        green = 36;
+        blue = 32;
+      } else if (isEnckeGap) {
+        alpha = 0.06;
+      } else if (isCRing) {
+        alpha = 0.18 + (norm / 0.24) * 0.24 + highFreqWave * 0.3;
+        red = 165;
+        green = 152;
+        blue = 135;
+      } else if (isBRing) {
+        alpha = Math.min(0.96, 0.82 + highFreqWave);
+        const tone = Math.floor(232 + Math.sin(norm * 110) * 22);
+        red = tone;
+        green = Math.floor(tone * 0.9);
+        blue = Math.floor(tone * 0.73);
+      } else {
+        // Outer A Ring
+        alpha = Math.min(0.85, 0.64 + highFreqWave * 0.7);
+        const tone = Math.floor(208 + Math.cos(norm * 150) * 18);
+        red = tone;
+        green = Math.floor(tone * 0.89);
+        blue = Math.floor(tone * 0.75);
+      }
+
+      rCtx.strokeStyle = `rgba(${red}, ${green}, ${blue}, ${Math.max(0, Math.min(1, alpha))})`;
+      rCtx.lineWidth = 1.35;
       rCtx.beginPath();
       rCtx.arc(cx, cy, r, 0, Math.PI * 2);
       rCtx.stroke();
     }
 
-    const map = new THREE.CanvasTexture(canvas);
-    const ringMap = new THREE.CanvasTexture(ringCanvas);
-    textureCache[planetId] = { map, ringMap };
+    const map = configureSphericalTexture(new THREE.CanvasTexture(canvas), true);
+    const bumpMap = configureSphericalTexture(new THREE.CanvasTexture(bumpCanvas), false);
+    const ringMap = configureSphericalTexture(new THREE.CanvasTexture(ringCanvas), true);
+    textureCache[planetId] = { map, bumpMap, ringMap };
     return textureCache[planetId];
   }
 
   // ==========================================================================
-  // 9. URANUS — Aquamarine Methane Atmosphere & Subtle Polar Hood
+  // 9. URANUS — Cyan-Aquamarine Methane Ice Haze, Zonal Bands & Polar Hood
   // ==========================================================================
   if (planetId === 'uranus') {
-    const grad = ctx.createLinearGradient(0, 0, 0, height);
-    grad.addColorStop(0, '#cffafe');
-    grad.addColorStop(0.25, '#67e8f9');
-    grad.addColorStop(0.5, '#22d3ee');
-    grad.addColorStop(0.75, '#06b6d4');
-    grad.addColorStop(1, '#a5f3fc');
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, width, height);
+    generateSphericalPixels((sx, sy, sz, _lon, lat) => {
+      const haze = fbm3D(sx * 5, sy * 14, sz * 5, 4, 907);
+      const polarHood = Math.max(0, (lat - 0.15) * 1.45);
+      const band = Math.cos(lat * Math.PI * 8) * 8 + (haze - 0.5) * 12;
 
-    const map = new THREE.CanvasTexture(canvas);
+      return {
+        r: 122 + polarHood * 85 + band,
+        g: 222 + polarHood * 28 + band,
+        b: 236 + polarHood * 18 + band * 0.6,
+        bump: 128 + band * 2,
+      };
+    });
+
+    const map = configureSphericalTexture(new THREE.CanvasTexture(canvas), true);
     textureCache[planetId] = { map };
     return textureCache[planetId];
   }
 
   // ==========================================================================
-  // 10. NEPTUNE — Deep Cobalt Methane Bands, Great Dark Spot & Cirrus Clouds
+  // 10. NEPTUNE — Deep Azure Methane Atmosphere, Great Dark Spot & Scooter Cirrus
   // ==========================================================================
-  const imgData = ctx.createImageData(width, height);
-  for (let y = 0; y < height; y++) {
-    const lat = y / height;
-    const band = Math.sin(lat * Math.PI * 14) * 20;
-    for (let x = 0; x < width; x++) {
-      const n = (fbmNoise((x / width) * 16, lat * 14, 4, 144) - 0.5) * 28;
-      const idx = (y * width + x) * 4;
-      imgData.data[idx] = Math.min(255, Math.max(0, Math.floor(25 + band * 0.5 + n)));
-      imgData.data[idx + 1] = Math.min(255, Math.max(0, Math.floor(85 + band + n)));
-      imgData.data[idx + 2] = Math.min(255, Math.max(0, Math.floor(220 + band + n)));
-      imgData.data[idx + 3] = 255;
-    }
-  }
-  ctx.putImageData(imgData, 0, 0);
+  generateSphericalPixels((sx, sy, sz, lon, lat) => {
+    const turb = fbm3D(sx * 7, sy * 18, sz * 7, 5, 953) - 0.5;
+    const cirrus = ridged3D(sx * 16, sy * 38, sz * 16, 4, 971);
+    const band = Math.sin((lat + turb * 0.04) * Math.PI * 12) * 18;
 
-  // Great Dark Spot anticyclone
-  ctx.save();
-  ctx.translate(920, 580);
-  ctx.scale(1.5, 1.0);
-  const gds = ctx.createRadialGradient(0, 0, 8, 0, 0, 56);
-  gds.addColorStop(0, '#0c1a40');
-  gds.addColorStop(0.65, '#1e3a8a');
-  gds.addColorStop(1, 'rgba(30, 58, 138, 0)');
-  ctx.fillStyle = gds;
-  ctx.beginPath();
-  ctx.arc(0, 0, 56, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
+    // Great Dark Spot anticyclonic oval
+    const dLon = Math.atan2(Math.sin(lon + 0.4), Math.cos(lon + 0.4));
+    const dLat = lat + 0.18;
+    const gdsDist = Math.hypot(dLon * 0.65, dLat * 1.5);
+    const gdsFactor = gdsDist < 0.13 ? Math.cos((gdsDist / 0.13) * Math.PI * 0.5) : 0;
 
-  // White methane cirrus storm clouds
-  ctx.strokeStyle = 'rgba(240, 249, 255, 0.72)';
-  ctx.lineWidth = 6;
-  ctx.beginPath();
-  ctx.moveTo(840, 530);
-  ctx.lineTo(1020, 524);
-  ctx.moveTo(420, 360);
-  ctx.lineTo(620, 368);
-  ctx.stroke();
+    // High-altitude bright white methane-ice cirrus streaks near GDS companion
+    const cirrusStreak =
+      cirrus > 0.78 && Math.abs(lat + 0.14) < 0.22 ? Math.pow((cirrus - 0.78) / 0.22, 1.4) * 165 : 0;
 
-  const map = new THREE.CanvasTexture(canvas);
-  textureCache[planetId] = { map };
+    const r = (24 + band * 0.6 + turb * 22) * (1 - gdsFactor * 0.55) + cirrusStreak;
+    const g = (78 + band * 1.1 + turb * 32) * (1 - gdsFactor * 0.48) + cirrusStreak;
+    const b = (212 + band * 1.2 + turb * 38) * (1 - gdsFactor * 0.32) + cirrusStreak * 0.8;
+
+    return {
+      r,
+      g,
+      b,
+      bump: 120 + cirrusStreak * 0.6,
+    };
+  });
+
+  const map = configureSphericalTexture(new THREE.CanvasTexture(canvas), true);
+  const bumpMap = configureSphericalTexture(new THREE.CanvasTexture(bumpCanvas), false);
+  textureCache[planetId] = { map, bumpMap };
   return textureCache[planetId];
 }

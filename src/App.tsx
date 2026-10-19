@@ -41,7 +41,7 @@ export const App: React.FC = () => {
 
   const [viewMode, setViewMode] = useState<'solar-system' | 'planet-closeup' | 'spacecraft'>('solar-system');
   const [selectedPlanetId, setSelectedPlanetId] = useState<string>('earth');
-  const [selectedCraftId, setSelectedCraftId] = useState<string>('voyager1');
+  const [selectedCraftId, setSelectedCraftId] = useState<string>('voyager');
   const [isMuted, setIsMuted] = useState(false);
   const [factIndex, setFactIndex] = useState(0);
 
