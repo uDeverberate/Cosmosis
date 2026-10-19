@@ -11,6 +11,7 @@ import { WalkthroughModal } from './components/WalkthroughModal';
 import { GlossaryModal } from './components/GlossaryModal';
 import { CadetProfileModal } from './components/CadetProfileModal';
 import { soundFX } from './utils/soundEffects';
+import { haptics } from './utils/haptics';
 import {
   Orbit,
   BookOpen,
@@ -23,6 +24,7 @@ import {
   HelpCircle,
   RefreshCw,
   ArrowLeft,
+  Crosshair,
 } from 'lucide-react';
 
 export const App: React.FC = () => {
@@ -118,27 +120,28 @@ export const App: React.FC = () => {
       />
 
       {/* 2. Floating Aerospace Command Capsule Header (Edge-to-Edge) */}
-      <header className="fixed top-3 inset-x-3 sm:inset-x-6 z-40 flex items-center justify-between pointer-events-none">
+      <header className="fixed top-2 sm:top-3 inset-x-2 sm:inset-x-6 z-40 flex items-center justify-between pointer-events-none pt-[max(0.25rem,env(safe-area-inset-top))]">
         {/* Left: Clean Brand Identity Pill */}
-        <div className="pointer-events-auto flex items-center gap-2.5 px-3 py-1.5 rounded-full bg-space-950/85 backdrop-blur-xl border border-slate-800/80 shadow-2xl">
+        <div className="pointer-events-auto flex items-center gap-2 px-2.5 sm:px-3 py-1.5 rounded-full bg-space-950/90 backdrop-blur-xl border border-slate-800/80 shadow-2xl">
           <button
             onClick={() => {
+              haptics.medium();
               soundFX.playClick();
               setActiveTab('explorer');
               setViewMode('solar-system');
             }}
-            className="flex items-center gap-2 group text-left"
+            className="flex items-center gap-1.5 sm:gap-2 group text-left active:scale-95 transition-transform"
             title="Reset to Full Solar System"
           >
-            <div className="h-7 w-7 rounded-full bg-[#ff3b21]/15 border border-[#ff3b21]/30 flex items-center justify-center text-[#ff3b21]">
-              <Orbit className="h-4 w-4 group-hover:rotate-180 transition-transform duration-700" />
+            <div className="h-6 w-6 sm:h-7 sm:w-7 rounded-full bg-[#ff3b21]/15 border border-[#ff3b21]/30 flex items-center justify-center text-[#ff3b21]">
+              <Orbit className="h-3.5 w-3.5 sm:h-4 sm:w-4 group-hover:rotate-180 transition-transform duration-700" />
             </div>
             <div>
-              <div className="flex items-center gap-1.5 leading-none">
+              <div className="flex items-center gap-1 sm:gap-1.5 leading-none">
                 <span className="text-xs sm:text-sm font-extrabold tracking-wider text-white">
                   COSMOSIS
                 </span>
-                <span className="text-[9px] font-mono uppercase px-1 py-0.2 rounded bg-[#ff3b21]/20 text-[#ff3b21] font-bold">
+                <span className="text-[8px] sm:text-[9px] font-mono uppercase px-1 py-0.2 rounded bg-[#ff3b21]/20 text-[#ff3b21] font-bold">
                   v3.0
                 </span>
               </div>
@@ -170,8 +173,8 @@ export const App: React.FC = () => {
         </div>
 
         {/* Right: Module Switcher & Cadet Profile Utility Cluster */}
-        <div className="pointer-events-auto flex items-center gap-1.5">
-          {/* Quick Module Switcher (Segmented Glass Tabs) */}
+        <div className="pointer-events-auto flex items-center gap-1 sm:gap-1.5">
+          {/* Quick Module Switcher (Segmented Glass Tabs on Desktop) */}
           <nav className="hidden lg:flex items-center bg-space-950/85 backdrop-blur-xl p-1 rounded-full border border-slate-800/80 shadow-2xl">
             {navTabs.map((tab) => {
               const isActive = activeTab === tab.id;
@@ -179,6 +182,7 @@ export const App: React.FC = () => {
                 <button
                   key={tab.id}
                   onClick={() => {
+                    haptics.selection();
                     soundFX.playClick();
                     setActiveTab(tab.id);
                   }}
@@ -196,30 +200,40 @@ export const App: React.FC = () => {
           </nav>
 
           <button
-            onClick={() => openWalkthrough(0)}
-            className="micro-btn px-2.5 py-1.5 rounded-full bg-space-950/85 hover:bg-space-900 border border-slate-800 text-[11px] font-mono text-slate-300 hover:text-white flex items-center gap-1 shadow-md"
+            onClick={() => {
+              haptics.light();
+              openWalkthrough(0);
+            }}
+            className="hidden md:flex micro-btn px-2.5 py-1.5 rounded-full bg-space-950/85 hover:bg-space-900 border border-slate-800 text-[11px] font-mono text-slate-300 hover:text-white items-center gap-1 shadow-md active:scale-95 transition-transform"
             title="Interactive Orientation Tour"
           >
             <HelpCircle className="h-3.5 w-3.5 text-cyan-400" />
-            <span className="hidden md:inline">Tour</span>
+            <span>Tour</span>
           </button>
 
           <button
-            onClick={() => setGlossaryOpen(true)}
-            className="micro-btn px-2.5 py-1.5 rounded-full bg-space-950/85 hover:bg-space-900 border border-slate-800 text-[11px] font-mono text-slate-300 hover:text-white flex items-center gap-1 shadow-md"
+            onClick={() => {
+              haptics.light();
+              setGlossaryOpen(true);
+            }}
+            className="hidden md:flex micro-btn px-2.5 py-1.5 rounded-full bg-space-950/85 hover:bg-space-900 border border-slate-800 text-[11px] font-mono text-slate-300 hover:text-white items-center gap-1 shadow-md active:scale-95 transition-transform"
             title="20-Term Student Space Dictionary"
           >
             <BookOpen className="h-3.5 w-3.5 text-amber-400" />
-            <span className="hidden md:inline">Glossary</span>
+            <span>Glossary</span>
           </button>
 
           {/* Cadet Profile Pill */}
           <button
-            onClick={() => setProfileModalOpen(true)}
-            className="micro-btn bg-space-950/85 hover:bg-space-900 border border-slate-700/80 rounded-full px-3 py-1.5 flex items-center gap-2 shadow-md"
+            onClick={() => {
+              haptics.medium();
+              setProfileModalOpen(true);
+            }}
+            className="micro-btn bg-space-950/90 hover:bg-space-900 border border-slate-700/80 rounded-full px-2 sm:px-3 py-1 sm:py-1.5 flex items-center gap-1.5 sm:gap-2 shadow-md active:scale-95 transition-transform"
             title="Open Cadet Profile, Badges & Diploma"
           >
-            <span className="text-sm">{currentRank.icon}</span>
+            <span className="text-xs sm:text-sm">{currentRank.icon}</span>
+            <span className="text-[10px] font-mono font-bold text-cyan-400 xl:hidden">{xp} XP</span>
             <div className="text-left hidden xl:block">
               <div className="flex items-center gap-1.5 text-[10px] font-medium text-white leading-none">
                 <span>{cadetName}</span>
@@ -232,15 +246,18 @@ export const App: React.FC = () => {
                 />
               </div>
             </div>
-            <div className="flex items-center gap-1 text-[10px] font-mono text-amber-300 bg-amber-500/10 px-1.5 py-0.5 rounded-full border border-amber-500/20">
+            <div className="hidden sm:flex items-center gap-1 text-[10px] font-mono text-amber-300 bg-amber-500/10 px-1.5 py-0.5 rounded-full border border-amber-500/20">
               <Award className="h-3 w-3" />
               <span>{unlockedBadges.length}</span>
             </div>
           </button>
 
           <button
-            onClick={() => setIsMuted(soundFX.toggleMute())}
-            className="p-1.5 rounded-full bg-space-950/85 hover:bg-space-900 border border-slate-800 text-slate-300 shadow-md"
+            onClick={() => {
+              haptics.light();
+              setIsMuted(soundFX.toggleMute());
+            }}
+            className="p-1.5 rounded-full bg-space-950/90 hover:bg-space-900 border border-slate-800 text-slate-300 shadow-md active:scale-95 transition-transform shrink-0"
             title="Toggle Audio"
           >
             {isMuted ? (
@@ -254,7 +271,7 @@ export const App: React.FC = () => {
 
       {/* 3. Slide-In Frosted Tactical Glass Decks for Other Modules (Chronicles, Labs, Arcade) */}
       {activeTab !== 'explorer' && (
-        <div className="fixed inset-0 z-30 pt-20 px-4 sm:px-8 pb-8 overflow-y-auto bg-space-950/85 backdrop-blur-2xl animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-30 pt-16 sm:pt-20 px-3 sm:px-8 pb-24 md:pb-8 overflow-y-auto bg-space-950/85 backdrop-blur-2xl animate-in fade-in duration-200">
           <div className="max-w-7xl mx-auto space-y-4">
             {/* Top Return Banner */}
             <div className="flex items-center justify-between pb-3.5 border-b border-slate-800">
@@ -270,14 +287,15 @@ export const App: React.FC = () => {
               </div>
               <button
                 onClick={() => {
+                  haptics.medium();
                   soundFX.playClick();
                   setActiveTab('explorer');
                 }}
-                className="px-4 py-1.5 rounded-full bg-white text-black hover:bg-zinc-200 text-xs font-mono uppercase font-bold flex items-center gap-2 shadow-xl transition-all"
+                className="px-3.5 sm:px-4 py-1.5 rounded-full bg-white text-black hover:bg-zinc-200 text-xs font-mono uppercase font-bold flex items-center gap-2 shadow-xl transition-all active:scale-95"
               >
                 <ArrowLeft className="h-3.5 w-3.5 text-[#ff3b21]" />
                 <span>Return to 3D Cockpit</span>
-                <kbd className="px-1.5 py-0.5 rounded bg-black/20 text-[10px]">ESC</kbd>
+                <kbd className="hidden sm:inline px-1.5 py-0.5 rounded bg-black/20 text-[10px]">ESC</kbd>
               </button>
             </div>
 
@@ -297,6 +315,7 @@ export const App: React.FC = () => {
           </p>
           <button
             onClick={() => {
+              haptics.light();
               soundFX.playClick();
               setFactIndex((prev) => (prev + 1) % COSMIC_FUN_FACTS_TICKER.length);
             }}
@@ -310,7 +329,7 @@ export const App: React.FC = () => {
 
       {/* 5. XP / Badge Notification Toast */}
       {recentToast && (
-        <div className="fixed bottom-5 right-5 z-50 max-w-sm bg-space-900/95 backdrop-blur-xl border border-cyan-400/50 rounded-xl p-3.5 shadow-2xl flex items-center gap-3 animate-in fade-in slide-in-from-bottom-4 duration-200">
+        <div className="fixed bottom-16 sm:bottom-5 right-3 sm:right-5 z-50 max-w-sm bg-space-900/95 backdrop-blur-xl border border-cyan-400/50 rounded-xl p-3.5 shadow-2xl flex items-center gap-3 animate-in fade-in slide-in-from-bottom-4 duration-200">
           <div className="h-10 w-10 rounded-lg bg-cyan-500/15 border border-cyan-400/30 flex items-center justify-center text-xl shrink-0">
             {recentToast.icon}
           </div>
@@ -323,6 +342,93 @@ export const App: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* 6. Sleek Native Mobile Bottom Navigation Bar (< md) */}
+      <nav className="fixed bottom-0 inset-x-0 z-40 md:hidden bg-space-950/95 backdrop-blur-2xl border-t border-slate-800/90 px-1 pt-1 pb-[max(0.6rem,env(safe-area-inset-bottom))] shadow-2xl">
+        <div className="flex items-center justify-around max-w-md mx-auto">
+          <button
+            onClick={() => {
+              haptics.selection();
+              soundFX.playClick();
+              setActiveTab('explorer');
+              setViewMode('solar-system');
+            }}
+            className={`flex flex-col items-center py-1 px-3 rounded-2xl transition-all active:scale-90 ${
+              activeTab === 'explorer' && viewMode === 'solar-system'
+                ? 'text-[#ff3b21] font-bold scale-105'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Orbit className="h-4.5 w-4.5 mb-0.5" />
+            <span className="text-[10px] font-mono tracking-wider">Solar</span>
+          </button>
+
+          <button
+            onClick={() => {
+              haptics.selection();
+              soundFX.playClick();
+              setActiveTab('explorer');
+              setViewMode('planet-closeup');
+            }}
+            className={`flex flex-col items-center py-1 px-3 rounded-2xl transition-all active:scale-90 ${
+              activeTab === 'explorer' && viewMode === 'planet-closeup'
+                ? 'text-cyan-400 font-bold scale-105'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Crosshair className="h-4.5 w-4.5 mb-0.5" />
+            <span className="text-[10px] font-mono tracking-wider">Close-Up</span>
+          </button>
+
+          <button
+            onClick={() => {
+              haptics.selection();
+              soundFX.playClick();
+              setActiveTab('stories');
+            }}
+            className={`flex flex-col items-center py-1 px-3 rounded-2xl transition-all active:scale-90 ${
+              activeTab === 'stories'
+                ? 'text-amber-400 font-bold scale-105'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <BookOpen className="h-4.5 w-4.5 mb-0.5" />
+            <span className="text-[10px] font-mono tracking-wider">Stories</span>
+          </button>
+
+          <button
+            onClick={() => {
+              haptics.selection();
+              soundFX.playClick();
+              setActiveTab('guides');
+            }}
+            className={`flex flex-col items-center py-1 px-3 rounded-2xl transition-all active:scale-90 ${
+              activeTab === 'guides'
+                ? 'text-emerald-400 font-bold scale-105'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Compass className="h-4.5 w-4.5 mb-0.5" />
+            <span className="text-[10px] font-mono tracking-wider">Labs</span>
+          </button>
+
+          <button
+            onClick={() => {
+              haptics.selection();
+              soundFX.playClick();
+              setActiveTab('games');
+            }}
+            className={`flex flex-col items-center py-1 px-3 rounded-2xl transition-all active:scale-90 ${
+              activeTab === 'games'
+                ? 'text-purple-400 font-bold scale-105'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Gamepad2 className="h-4.5 w-4.5 mb-0.5" />
+            <span className="text-[10px] font-mono tracking-wider">Arcade</span>
+          </button>
+        </div>
+      </nav>
 
       {/* Modals */}
       <WalkthroughModal />

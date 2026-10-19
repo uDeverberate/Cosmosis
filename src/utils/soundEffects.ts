@@ -1,4 +1,5 @@
 import confetti from 'canvas-confetti';
+import { haptics } from './haptics';
 
 class SoundEffectsManager {
   private ctx: AudioContext | null = null;
@@ -29,6 +30,7 @@ class SoundEffectsManager {
   }
 
   public async playClick(): Promise<void> {
+    haptics.light();
     if (!(await this.ensureContext()) || !this.ctx || !this.masterGain) return;
     const now = this.ctx.currentTime;
     const osc = this.ctx.createOscillator();
@@ -65,6 +67,7 @@ class SoundEffectsManager {
   }
 
   public async playScanPing(): Promise<void> {
+    haptics.medium();
     if (!(await this.ensureContext()) || !this.ctx || !this.masterGain) return;
     const now = this.ctx.currentTime;
     const osc = this.ctx.createOscillator();
@@ -83,6 +86,7 @@ class SoundEffectsManager {
   }
 
   public async playSuccessChime(): Promise<void> {
+    haptics.success();
     if (!(await this.ensureContext()) || !this.ctx || !this.masterGain) return;
     const now = this.ctx.currentTime;
     const notes = [523.25, 659.25, 783.99, 1046.5]; // C5, E5, G5, C6
@@ -107,6 +111,7 @@ class SoundEffectsManager {
   }
 
   public async playAlert(): Promise<void> {
+    haptics.error();
     if (!(await this.ensureContext()) || !this.ctx || !this.masterGain) return;
     const now = this.ctx.currentTime;
     const osc = this.ctx.createOscillator();
@@ -125,6 +130,7 @@ class SoundEffectsManager {
   }
 
   public async startThrusterSound(): Promise<void> {
+    haptics.warp();
     if (!(await this.ensureContext()) || !this.ctx || !this.masterGain || this.thrusterOsc) return;
     const now = this.ctx.currentTime;
     this.thrusterOsc = this.ctx.createOscillator();

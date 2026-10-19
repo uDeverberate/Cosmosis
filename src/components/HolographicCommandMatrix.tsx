@@ -105,16 +105,16 @@ export const HolographicCommandMatrix: React.FC<HolographicCommandMatrixProps> =
       {/* Floating Tactical Dropdown Pill Button */}
       <button
         onClick={handleOpenMatrix}
-        className={`group flex items-center gap-2.5 px-3.5 py-1.5 rounded-full border transition-all duration-300 backdrop-blur-xl ${
+        className={`group flex items-center gap-2 sm:gap-2.5 px-2.5 sm:px-3.5 py-1.5 rounded-full border transition-all duration-300 backdrop-blur-xl ${
           isOpen
             ? 'bg-space-900 border-[#ff3b21] shadow-lg shadow-[#ff3b21]/20 text-white'
             : 'bg-space-950/80 hover:bg-space-900/90 border-slate-700/80 hover:border-cyan-400 text-slate-200 shadow-md'
         }`}
         title="Open Celestial Navigator & System Menu (Press 'N')"
       >
-        <div className="flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-[#ff3b21] animate-ping" />
-          <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-white">
+        <div className="flex items-center gap-1.5 sm:gap-2">
+          <span className="w-2 h-2 rounded-full bg-[#ff3b21] animate-ping shrink-0" />
+          <span className="text-[10px] sm:text-[11px] font-mono font-bold uppercase tracking-wider text-white truncate max-w-[125px] sm:max-w-none">
             {activeTab === 'explorer'
               ? isCloseup
                 ? `TARGET // ${currentPlanet.name.toUpperCase()}`
@@ -127,8 +127,8 @@ export const HolographicCommandMatrix: React.FC<HolographicCommandMatrixProps> =
           </span>
         </div>
 
-        <div className="flex items-center gap-1 pl-1.5 border-l border-slate-700/80 text-[10px] font-mono text-cyan-400 group-hover:text-cyan-300">
-          <span>NAVIGATOR</span>
+        <div className="flex items-center gap-1 pl-1.5 border-l border-slate-700/80 text-[10px] font-mono text-cyan-400 group-hover:text-cyan-300 shrink-0">
+          <span className="hidden xs:inline">NAVIGATOR</span>
           <ChevronDown
             className={`h-3.5 w-3.5 transition-transform duration-300 ${
               isOpen ? 'rotate-180 text-[#ff3b21]' : 'text-cyan-400'
@@ -139,11 +139,11 @@ export const HolographicCommandMatrix: React.FC<HolographicCommandMatrixProps> =
 
       {/* Holographic Aerospace Grid Dropdown Drawer */}
       {isOpen && (
-        <div className="fixed inset-x-4 top-16 sm:top-20 max-w-5xl mx-auto bg-space-950/95 backdrop-blur-2xl border border-cyan-500/30 rounded-2xl shadow-2xl p-5 animate-in fade-in zoom-in-95 duration-200 max-h-[82vh] overflow-y-auto">
+        <div className="fixed inset-x-2 sm:inset-x-4 top-14 sm:top-20 max-w-5xl mx-auto bg-space-950/95 backdrop-blur-2xl border border-cyan-500/30 rounded-2xl shadow-2xl p-3 sm:p-5 animate-in fade-in zoom-in-95 duration-200 max-h-[85vh] overflow-y-auto">
           {/* Drawer Top Header & Quick Search */}
-          <div className="flex flex-wrap items-center justify-between gap-3 pb-3.5 border-b border-slate-800">
+          <div className="flex flex-wrap items-center justify-between gap-2.5 pb-3 border-b border-slate-800">
             <div className="flex items-center gap-2.5">
-              <div className="h-8 w-8 rounded-lg bg-[#ff3b21]/15 border border-[#ff3b21]/30 flex items-center justify-center text-[#ff3b21]">
+              <div className="h-8 w-8 rounded-lg bg-[#ff3b21]/15 border border-[#ff3b21]/30 flex items-center justify-center text-[#ff3b21] shrink-0">
                 <Orbit className="h-4 w-4 animate-spin" style={{ animationDuration: '24s' }} />
               </div>
               <div>
@@ -155,22 +155,22 @@ export const HolographicCommandMatrix: React.FC<HolographicCommandMatrixProps> =
                     SYSTEM INDEX
                   </span>
                 </div>
-                <p className="text-[11px] text-slate-400">
+                <p className="text-[10px] sm:text-[11px] text-slate-400">
                   Select any celestial body, historic spacecraft, or flight module
                 </p>
               </div>
             </div>
 
-            {/* Quick Search Input */}
-            <div className="flex items-center gap-2">
-              <div className="relative">
+            {/* Quick Search & Actions */}
+            <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end">
+              <div className="relative flex-1 sm:flex-initial">
                 <Search className="h-3.5 w-3.5 text-slate-400 absolute left-2.5 top-2.5" />
                 <input
                   type="text"
-                  placeholder="Search worlds, craft, missions..."
+                  placeholder="Search worlds, craft..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="bg-black/70 border border-slate-800 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 font-mono focus:outline-none focus:border-cyan-400 w-52"
+                  className="bg-black/70 border border-slate-800 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 font-mono focus:outline-none focus:border-cyan-400 w-full sm:w-52"
                 />
               </div>
 
@@ -180,16 +180,16 @@ export const HolographicCommandMatrix: React.FC<HolographicCommandMatrixProps> =
                     onReturnToSolarSystem();
                     setIsOpen(false);
                   }}
-                  className="px-3 py-1.5 rounded-lg bg-cyan-500/15 border border-cyan-400/40 text-cyan-300 hover:bg-cyan-500/25 text-xs font-mono uppercase font-bold flex items-center gap-1.5"
+                  className="px-2.5 py-1.5 rounded-lg bg-cyan-500/15 border border-cyan-400/40 text-cyan-300 hover:bg-cyan-500/25 text-xs font-mono uppercase font-bold flex items-center gap-1.5 shrink-0"
                 >
                   <Orbit className="h-3 w-3" />
-                  <span>Solar Orbit</span>
+                  <span>Solar</span>
                 </button>
               )}
 
               <button
                 onClick={() => setIsOpen(false)}
-                className="p-1.5 rounded-lg bg-space-900 hover:bg-space-800 border border-slate-800 text-slate-400 hover:text-white"
+                className="p-1.5 rounded-lg bg-space-900 hover:bg-space-800 border border-slate-800 text-slate-400 hover:text-white shrink-0"
                 title="Close (ESC)"
               >
                 <X className="h-4 w-4" />
@@ -197,11 +197,74 @@ export const HolographicCommandMatrix: React.FC<HolographicCommandMatrixProps> =
             </div>
           </div>
 
+          {/* Quick Module Switcher Tabs (Instant Access for Mobile, Tablets & PCs) */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-3 pb-1 border-b border-slate-800/80">
+            <button
+              onClick={() => handleModuleClick('explorer')}
+              className={`p-2 sm:p-2.5 rounded-xl border text-left transition-all flex items-center gap-2 ${
+                activeTab === 'explorer'
+                  ? 'bg-cyan-500/20 border-cyan-400 text-white shadow-sm'
+                  : 'bg-black/60 border-slate-800 text-slate-300 hover:border-slate-700'
+              }`}
+            >
+              <Orbit className="h-4 w-4 text-cyan-400 shrink-0" />
+              <div className="min-w-0">
+                <div className="text-xs font-bold text-white truncate">3D Observatory</div>
+                <div className="text-[9px] font-mono text-cyan-300 truncate">Planets & Fleet</div>
+              </div>
+            </button>
+
+            <button
+              onClick={() => handleModuleClick('stories')}
+              className={`p-2 sm:p-2.5 rounded-xl border text-left transition-all flex items-center gap-2 ${
+                activeTab === 'stories'
+                  ? 'bg-amber-500/20 border-amber-400 text-white shadow-sm'
+                  : 'bg-black/60 border-slate-800 text-slate-300 hover:border-slate-700'
+              }`}
+            >
+              <BookOpen className="h-4 w-4 text-amber-400 shrink-0" />
+              <div className="min-w-0">
+                <div className="text-xs font-bold text-white truncate">Chronicles</div>
+                <div className="text-[9px] font-mono text-amber-300 truncate">6 Dioramas</div>
+              </div>
+            </button>
+
+            <button
+              onClick={() => handleModuleClick('guides')}
+              className={`p-2 sm:p-2.5 rounded-xl border text-left transition-all flex items-center gap-2 ${
+                activeTab === 'guides'
+                  ? 'bg-purple-500/20 border-purple-400 text-white shadow-sm'
+                  : 'bg-black/60 border-slate-800 text-slate-300 hover:border-slate-700'
+              }`}
+            >
+              <Compass className="h-4 w-4 text-purple-400 shrink-0" />
+              <div className="min-w-0">
+                <div className="text-xs font-bold text-white truncate">Physics Labs</div>
+                <div className="text-[9px] font-mono text-purple-300 truncate">4 Simulators</div>
+              </div>
+            </button>
+
+            <button
+              onClick={() => handleModuleClick('games')}
+              className={`p-2 sm:p-2.5 rounded-xl border text-left transition-all flex items-center gap-2 ${
+                activeTab === 'games'
+                  ? 'bg-emerald-500/20 border-emerald-400 text-white shadow-sm'
+                  : 'bg-black/60 border-slate-800 text-slate-300 hover:border-slate-700'
+              }`}
+            >
+              <Gamepad2 className="h-4 w-4 text-emerald-400 shrink-0" />
+              <div className="min-w-0">
+                <div className="text-xs font-bold text-white truncate">Flight Arcade</div>
+                <div className="text-[9px] font-mono text-emerald-300 truncate">5 Games & Trivia</div>
+              </div>
+            </button>
+          </div>
+
           {/* Grid Layout of All Platform Offerings */}
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-5 pt-4">
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-4 pt-3">
             {/* Left 7 Columns: Solar System Worlds & Spacecraft Hangar */}
             <div className="md:col-span-7 space-y-4">
-              {/* 1. Solar System Planets (9) */}
+              {/* 1. Solar System Planets */}
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-[10px] font-mono uppercase tracking-widest text-[#ff3b21] font-bold flex items-center gap-1.5">
@@ -211,7 +274,7 @@ export const HolographicCommandMatrix: React.FC<HolographicCommandMatrixProps> =
                   <span className="text-[10px] font-mono text-slate-500">Click to fly into 3D orbit</span>
                 </div>
 
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                   {filteredPlanets.map((planet) => {
                     const isSelected = isCloseup && currentPlanetId === planet.id;
                     return (
@@ -252,7 +315,7 @@ export const HolographicCommandMatrix: React.FC<HolographicCommandMatrixProps> =
                   <span className="text-[10px] font-mono text-slate-500">Interactive Subsystem Scans</span>
                 </div>
 
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                   {filteredCraft.map((craft) => {
                     const isSelected = currentCraftId === craft.id;
                     return (

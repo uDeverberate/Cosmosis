@@ -1,15 +1,17 @@
 import React, { useRef, useState, useMemo, useEffect, Suspense, Component, ReactNode } from 'react';
-import { Canvas, useFrame } from '@react-three/fiber';
-import { OrbitControls, Stars, Html, Ring, Float, Line, useGLTF } from '@react-three/drei';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { OrbitControls, Stars, Html, Float, Line, useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { SOLAR_SYSTEM_PLANETS, SPACECRAFT_FLEET } from '../data/spaceAcademyData';
 import { PlanetData, SpacecraftData, SpacecraftHotspot } from '../types/academy';
 import { useAcademyStore } from '../store/useAcademyStore';
 import { soundFX } from '../utils/soundEffects';
-import { getPlanetTextures, getAsteroidRockTextures } from '../utils/planetTextures';
+import { haptics } from '../utils/haptics';
+import { getAsteroidRockTextures } from '../utils/planetTextures';
 import { TiltCard3D } from './TiltCard3D';
 import {
   Orbit,
+  Compass,
   Rocket,
   Sparkles,
   Play,
@@ -30,6 +32,7 @@ import {
   Maximize2,
   ChevronLeft,
   ChevronRight,
+  X,
 } from 'lucide-react';
 
 // --- Planet-Specific Orbital Debris, Meteoroid & Cleanup Telemetry Database ---
@@ -367,103 +370,6 @@ const AtmosphereFresnelHalo: React.FC<{
   );
 };
 
-// --- Custom GLSL Boiling Solar Photosphere & Limb-Darkening Shader ---
-const PhotorealisticSunShaderSurface: React.FC<{
-  radius: number;
-  baseMap: THREE.Texture;
-  onClick?: () => void;
-}> = ({ radius, baseMap, onClick }) => {
-  const matRef = useRef<THREE.ShaderMaterial>(null!);
-
-  const uniforms = useMemo(
-    () => ({
-      uTime: { value: 0 },
-      uMap: { value: baseMap },
-    }),
-    [baseMap]
-  );
-
-  useFrame((state) => {
-    if (matRef.current) {
-      matRef.current.uniforms.uTime.value = state.clock.elapsedTime;
-    }
-  });
-
-  return (
-    <mesh
-      onClick={(e) => {
-        if (onClick) {
-          e.stopPropagation();
-          onClick();
-        }
-      }}
-    >
-      <sphereGeometry args={[radius, 64, 64]} />
-      <shaderMaterial
-        ref={matRef}
-        uniforms={uniforms}
-        vertexShader={`
-          varying vec2 vUv;
-          varying vec3 vNormal;
-          varying vec3 vViewDir;
-          varying vec3 vPos;
-          void main() {
-            vUv = uv;
-            vPos = position;
-            vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-            vNormal = normalize(normalMatrix * normal);
-            vViewDir = normalize(-mvPosition.xyz);
-            gl_Position = projectionMatrix * mvPosition;
-          }
-        `}
-        fragmentShader={`
-          uniform float uTime;
-          uniform sampler2D uMap;
-          varying vec2 vUv;
-          varying vec3 vNormal;
-          varying vec3 vViewDir;
-          varying vec3 vPos;
-
-          // Fast 3D harmonic plasma convection turbulence
-          float plasmaNoise(vec3 p) {
-            float n = sin(p.x * 7.2 + uTime * 0.9) * cos(p.y * 7.2 - uTime * 0.7) * sin(p.z * 7.2 + uTime * 0.5);
-            n += 0.5 * sin(p.x * 15.5 - uTime * 1.4) * cos(p.z * 15.5 + uTime * 1.1);
-            n += 0.25 * cos(p.y * 28.0 + p.x * 22.0 - uTime * 2.1);
-            return n * 0.5 + 0.5;
-          }
-
-          void main() {
-            vec3 normPos = normalize(vPos);
-            float boil = plasmaNoise(normPos * 2.2);
-            float fineGranules = plasmaNoise(normPos * 5.8 + vec3(boil * 0.4));
-
-            vec2 warpedUv = vUv + vec2(sin(vUv.y * 40.0 + uTime * 0.8), cos(vUv.x * 40.0 - uTime * 0.7)) * 0.0035;
-            vec3 texColor = texture2D(uMap, warpedUv).rgb;
-
-            // Astrophysical Solar Limb Darkening: mu = cos(theta) = dot(N, V)
-            float mu = clamp(dot(vNormal, vViewDir), 0.0, 1.0);
-            float limbDarkening = pow(mu, 0.48);
-
-            // Color ramp from dark magnetic umbra to deep crimson-orange limb to white-hot 5778K core
-            vec3 deepLimb = vec3(0.88, 0.22, 0.02);
-            vec3 midPhotosphere = vec3(1.0, 0.58, 0.08);
-            vec3 hotCore = vec3(1.0, 0.96, 0.78);
-
-            float energy = clamp((texColor.r * 0.55 + boil * 0.25 + fineGranules * 0.2) * (0.65 + 0.45 * limbDarkening), 0.0, 1.0);
-            vec3 col = mix(deepLimb, midPhotosphere, smoothstep(0.15, 0.65, energy));
-            col = mix(col, hotCore, smoothstep(0.62, 0.96, energy * limbDarkening));
-
-            // Bright magnetic faculae near the solar limb
-            float faculae = pow(1.0 - mu, 2.2) * smoothstep(0.68, 0.92, fineGranules) * 0.65;
-            col += vec3(1.0, 0.82, 0.35) * faculae;
-
-            gl_FragColor = vec4(col, 1.0);
-          }
-        `}
-      />
-    </mesh>
-  );
-};
 
 // --- Realistic 3D Asteroid Belt with Pitted Craggy Rocks & Chaotic Tumbling ---
 const AsteroidBelt3D: React.FC<{ timeSpeed: number }> = ({ timeSpeed }) => {
@@ -551,15 +457,10 @@ const AsteroidBelt3D: React.FC<{ timeSpeed: number }> = ({ timeSpeed }) => {
         const ang = (i / 24) * Math.PI * 2 + (i % 3) * 0.14;
         const rad = 9.85 + ((i * 7) % 5 - 2) * 0.22;
         const yPos = ((i * 11) % 5 - 2) * 0.11;
-        const urls = [
-          '/models/asteroid.glb?v=3',
-          '/models/asteroid-2.glb?v=3',
-          '/models/asteroid_with_minerals.glb?v=3',
-        ];
         return (
           <FeaturedGLBAsteroid
             key={`glb-belt-${i}`}
-            modelUrl={urls[i % urls.length]}
+            modelUrl={ASTEROID_GLB_MODELS[i % ASTEROID_GLB_MODELS.length]}
             position={[Math.cos(ang) * rad, yPos, Math.sin(ang) * rad]}
             size={0.09 + (i % 4) * 0.032}
             rotationSpeed={[
@@ -797,331 +698,40 @@ const PlanetCloseUpDebrisAndMeteors: React.FC<{
   );
 };
 
-// --- Photorealistic Textured 3D Planet Sphere with PBR Specular & Rayleigh Atmosphere ---
-interface TexturedPlanetSphereProps {
+// --- Lightweight, Resilient PBR Celestial Fallback Sphere ---
+const OrbitingPlanetSphere: React.FC<{
   planet: PlanetData;
   radius: number;
   isSelected?: boolean;
   onClick?: () => void;
-}
-
-const TexturedPlanetSphere: React.FC<TexturedPlanetSphereProps> = ({
-  planet,
-  radius,
-  isSelected = false,
-  onClick,
-}) => {
+}> = ({ planet, radius, isSelected, onClick }) => {
   const meshRef = useRef<THREE.Mesh>(null!);
-  const cloudsRef = useRef<THREE.Mesh>(null!);
-  const cloudShadowRef = useRef<THREE.Mesh>(null!);
-  const coronaRef = useRef<THREE.Mesh>(null!);
-  const coronaOuterRef = useRef<THREE.Mesh>(null!);
-  const prominencesRef = useRef<THREE.Group>(null!);
-  const moonGroupRef = useRef<THREE.Group>(null!);
-
-  const textures = useMemo(() => getPlanetTextures(planet.id), [planet.id]);
-  const moonTextures = useMemo(
-    () => (planet.id === 'earth' ? getPlanetTextures('moon') : null),
-    [planet.id]
-  );
-  const atmosphere = ATMOSPHERE_PROFILES[planet.id];
-
-  useFrame((state, delta) => {
-    if (meshRef.current) {
-      meshRef.current.rotation.y += delta * (planet.id === 'sun' ? 0.22 : 0.36);
-    }
-    if (cloudsRef.current) {
-      cloudsRef.current.rotation.y += delta * 0.48;
-    }
-    if (cloudShadowRef.current) {
-      cloudShadowRef.current.rotation.y += delta * 0.48;
-    }
-    if (coronaRef.current) {
-      const pulse = 1 + Math.sin(state.clock.elapsedTime * 2.5) * 0.03;
-      coronaRef.current.scale.set(pulse, pulse, pulse);
-    }
-    if (coronaOuterRef.current) {
-      const outerPulse = 1 + Math.cos(state.clock.elapsedTime * 1.8) * 0.05;
-      coronaOuterRef.current.scale.set(outerPulse, outerPulse, outerPulse);
-    }
-    if (prominencesRef.current) {
-      prominencesRef.current.rotation.y += delta * 0.32;
-      prominencesRef.current.rotation.z = Math.sin(state.clock.elapsedTime * 0.8) * 0.14;
-    }
-    if (moonGroupRef.current) {
-      moonGroupRef.current.rotation.y += delta * 0.55;
-    }
-  });
-
-  return (
-    <group>
-      {/* Main Celestial Body Surface Mesh */}
-      {planet.id === 'sun' ? (
-        <PhotorealisticSunShaderSurface
-          radius={radius}
-          baseMap={textures.map}
-          onClick={onClick}
-        />
-      ) : (
-        <mesh
-          ref={meshRef}
-          rotation={[
-            planet.id === 'uranus' ? Math.PI / 2.1 : planet.id === 'saturn' ? 0.42 : 0.15,
-            0,
-            0,
-          ]}
-          onClick={(e) => {
-            if (onClick) {
-              e.stopPropagation();
-              onClick();
-            }
-          }}
-        >
-          <sphereGeometry args={[radius, 64, 64]} />
-          <meshPhysicalMaterial
-            map={textures.map}
-            bumpMap={textures.bumpMap}
-            bumpScale={
-              textures.bumpMap
-                ? planet.id === 'earth'
-                  ? 0.055
-                  : planet.id === 'mars' || planet.id === 'mercury'
-                  ? 0.085
-                  : 0.03
-                : 0
-            }
-            roughnessMap={planet.id === 'earth' ? textures.specularMap : undefined}
-            roughness={
-              planet.id === 'earth'
-                ? 0.72
-                : planet.id === 'mercury' || planet.id === 'mars'
-                ? 0.88
-                : 0.68
-            }
-            metalness={planet.id === 'earth' ? 0.1 : 0.05}
-            clearcoat={planet.id === 'earth' ? 0.32 : planet.id === 'uranus' || planet.id === 'neptune' ? 0.18 : 0.0}
-            clearcoatRoughness={0.35}
-            emissive={isSelected ? planet.color : '#000000'}
-            emissiveIntensity={isSelected ? 0.12 : 0}
-          />
-        </mesh>
-      )}
-
-      {/* Earth's Subtle Cloud Drop-Shadow Layer + High-Altitude 3D Cyclone Cloud Deck */}
-      {planet.id === 'earth' && textures.cloudsMap && (
-        <>
-          <mesh ref={cloudShadowRef} rotation={[0.01, 0.015, 0]}>
-            <sphereGeometry args={[radius * 1.008, 64, 64]} />
-            <meshBasicMaterial
-              map={textures.cloudsMap}
-              color="#020617"
-              transparent
-              opacity={0.35}
-              depthWrite={false}
-            />
-          </mesh>
-          <mesh ref={cloudsRef}>
-            <sphereGeometry args={[radius * 1.022, 64, 64]} />
-            <meshStandardMaterial
-              map={textures.cloudsMap}
-              bumpMap={textures.cloudsMap}
-              bumpScale={0.018}
-              roughness={0.85}
-              transparent
-              opacity={0.92}
-              depthWrite={false}
-            />
-          </mesh>
-        </>
-      )}
-
-      {/* Custom GLSL Fresnel Rayleigh Scattering Halo for Atmospheric Planets */}
-      {atmosphere && (
-        <AtmosphereFresnelHalo
-          radius={radius}
-          color={atmosphere.color}
-          twilightColor={atmosphere.twilightColor}
-          scale={atmosphere.scale}
-          intensity={atmosphere.intensity}
-          power={atmosphere.power}
-        />
-      )}
-
-      {/* The Sun: Volumetric Fresnel Chromosphere & Outer Coronal Plasma Halo */}
-      {planet.id === 'sun' && (
-        <>
-          <AtmosphereFresnelHalo
-            radius={radius}
-            color="#fef08a"
-            twilightColor="#f97316"
-            scale={1.08}
-            intensity={1.65}
-            power={2.2}
-          />
-          <AtmosphereFresnelHalo
-            radius={radius}
-            color="#f59e0b"
-            twilightColor="#dc2626"
-            scale={1.26}
-            intensity={1.15}
-            power={3.4}
-          />
-          {/* Magnetic Solar Prominence Loops */}
-          <group ref={prominencesRef}>
-            <mesh position={[radius * 0.96, radius * 0.25, 0]} rotation={[0, 0, 0.4]}>
-              <torusGeometry args={[radius * 0.18, 0.02, 16, 40, Math.PI]} />
-              <meshBasicMaterial
-                color="#ffedd5"
-                transparent
-                opacity={0.85}
-                blending={THREE.AdditiveBlending}
-              />
-            </mesh>
-            <mesh position={[-radius * 0.92, -radius * 0.35, 0]} rotation={[0, 0, -1.8]}>
-              <torusGeometry args={[radius * 0.22, 0.022, 16, 40, Math.PI]} />
-              <meshBasicMaterial
-                color="#f97316"
-                transparent
-                opacity={0.8}
-                blending={THREE.AdditiveBlending}
-              />
-            </mesh>
-            <mesh position={[0, radius * 0.93, -radius * 0.2]} rotation={[1.2, 0, 0]}>
-              <torusGeometry args={[radius * 0.15, 0.018, 16, 40, Math.PI]} />
-              <meshBasicMaterial
-                color="#ef4444"
-                transparent
-                opacity={0.75}
-                blending={THREE.AdditiveBlending}
-              />
-            </mesh>
-          </group>
-        </>
-      )}
-
-      {/* Saturn & Uranus Rings with Cassini & Encke Divisions */}
-      {planet.hasRings && (
-        <group rotation={[planet.id === 'uranus' ? 1.45 : 1.18, 0.22, 0]}>
-          {planet.id === 'saturn' && textures.ringMap ? (
-            <mesh>
-              <planeGeometry args={[radius * 4.5, radius * 4.5]} />
-              <meshStandardMaterial
-                map={textures.ringMap}
-                side={THREE.DoubleSide}
-                transparent
-                roughness={0.5}
-                metalness={0.1}
-                depthWrite={false}
-              />
-            </mesh>
-          ) : (
-            <>
-              <Ring args={[radius * 1.42, radius * 1.62, 96]}>
-                <meshStandardMaterial
-                  color={planet.accentColor}
-                  side={THREE.DoubleSide}
-                  transparent
-                  opacity={0.32}
-                />
-              </Ring>
-              <Ring args={[radius * 1.68, radius * 1.88, 96]}>
-                <meshStandardMaterial
-                  color="#e0f2fe"
-                  side={THREE.DoubleSide}
-                  transparent
-                  opacity={0.48}
-                />
-              </Ring>
-            </>
-          )}
-        </group>
-      )}
-
-      {/* Earth's Cratered Moon with High-Contrast Regolith Relief */}
-      {planet.id === 'earth' && moonTextures && (
-        <group ref={moonGroupRef}>
-          <mesh position={[radius * 2.15, radius * 0.24, 0]}>
-            <sphereGeometry args={[radius * 0.24, 48, 48]} />
-            <meshStandardMaterial
-              map={moonTextures.map}
-              bumpMap={moonTextures.bumpMap}
-              bumpScale={0.055}
-              roughness={0.92}
-              metalness={0.05}
-            />
-          </mesh>
-        </group>
-      )}
-    </group>
-  );
-};
-
-// --- 3D Planet Node in the Solar System Orrery ---
-interface OrbitingPlanetProps {
-  planet: PlanetData;
-  timeSpeed: number;
-  showOrbits: boolean;
-  isSelected: boolean;
-  onSelectAndZoom: (planet: PlanetData) => void;
-}
-
-const OrbitingPlanetMesh: React.FC<OrbitingPlanetProps> = ({
-  planet,
-  timeSpeed,
-  showOrbits,
-  isSelected,
-  onSelectAndZoom,
-}) => {
-  const groupRef = useRef<THREE.Group>(null!);
-  const angleRef = useRef<number>(Math.random() * Math.PI * 2);
-
   useFrame((_, delta) => {
-    if (planet.orbitRadius > 0) {
-      angleRef.current += delta * planet.orbitSpeed * timeSpeed * 0.45;
-      const x = Math.cos(angleRef.current) * planet.orbitRadius;
-      const z = Math.sin(angleRef.current) * planet.orbitRadius;
-      if (groupRef.current) {
-        groupRef.current.position.set(x, 0, z);
-      }
+    if (meshRef.current) {
+      meshRef.current.rotation.y += delta * 0.45;
     }
   });
 
   return (
-    <>
-      {showOrbits && planet.orbitRadius > 0 && (
-        <mesh rotation={[-Math.PI / 2, 0, 0]}>
-          <ringGeometry args={[planet.orbitRadius - 0.02, planet.orbitRadius + 0.02, 112]} />
-          <meshBasicMaterial
-            color={isSelected ? '#ff3b21' : '#52525b'}
-            side={THREE.DoubleSide}
-            transparent
-            opacity={isSelected ? 0.85 : 0.32}
-          />
-        </mesh>
-      )}
-
-      <group ref={groupRef} position={[planet.orbitRadius, 0, 0]}>
-        <PlanetGLBModel
-          planet={planet}
-          radius={planet.radiusScale}
-          isSelected={isSelected}
-          onClick={() => onSelectAndZoom(planet)}
+    <group
+      onClick={(e) => {
+        if (onClick) {
+          e.stopPropagation();
+          onClick();
+        }
+      }}
+    >
+      <mesh ref={meshRef}>
+        <sphereGeometry args={[radius, 32, 32]} />
+        <meshStandardMaterial
+          color={planet.color}
+          roughness={planet.id === 'earth' ? 0.35 : 0.72}
+          metalness={planet.id === 'earth' ? 0.25 : 0.08}
+          emissive={isSelected ? planet.color : '#000000'}
+          emissiveIntensity={isSelected ? 0.45 : 0}
         />
-
-        <Html distanceFactor={18} position={[0, planet.radiusScale + 0.58, 0]} center>
-          <button
-            onClick={() => onSelectAndZoom(planet)}
-            className={`px-2.5 py-0.5 rounded-full text-[10px] font-mono uppercase tracking-wider whitespace-nowrap transition-all border ${
-              isSelected
-                ? 'bg-[#ff3b21] text-white font-bold border-white shadow-lg scale-105'
-                : 'bg-black/85 text-zinc-200 border-zinc-700 hover:border-[#ff3b21] hover:text-white'
-            }`}
-          >
-            {planet.name.split(' ')[0]}
-          </button>
-        </Html>
-      </group>
-    </>
+      </mesh>
+    </group>
   );
 };
 
@@ -1133,233 +743,48 @@ interface Spacecraft3DSceneProps {
   onSelectHotspot: (h: SpacecraftHotspot) => void;
 }
 
-const Spacecraft3DModel: React.FC<Spacecraft3DSceneProps> = ({
-  craft,
-  scannedHotspots,
-  activeHotspot,
-  onSelectHotspot,
-}) => {
-  const groupRef = useRef<THREE.Group>(null!);
-
-  useFrame((_, delta) => {
-    if (groupRef.current) {
-      groupRef.current.rotation.y += delta * 0.22;
-    }
-  });
-
-  return (
-    <Float speed={1.5} rotationIntensity={0.18} floatIntensity={0.3}>
-      <group ref={groupRef}>
-        {craft.id === 'apollo' && (
-          <group>
-            <mesh position={[0, -0.35, 0]}>
-              <cylinderGeometry args={[1.15, 1.15, 0.85, 8]} />
-              <meshStandardMaterial color="#f59e0b" metalness={0.85} roughness={0.25} />
-            </mesh>
-            <mesh position={[0, -1.0, 0]}>
-              <coneGeometry args={[0.5, 0.7, 24, 1, true]} />
-              <meshStandardMaterial color="#334155" metalness={0.9} roughness={0.3} side={THREE.DoubleSide} />
-            </mesh>
-            <mesh position={[0, 0.65, 0]}>
-              <dodecahedronGeometry args={[0.85, 0]} />
-              <meshStandardMaterial color="#cbd5e1" metalness={0.7} roughness={0.35} />
-            </mesh>
-            {[0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2].map((angle, i) => (
-              <group key={i} rotation={[0, angle, 0]}>
-                <mesh position={[1.45, -0.75, 0]} rotation={[0, 0, -0.45]}>
-                  <cylinderGeometry args={[0.04, 0.04, 1.5]} />
-                  <meshStandardMaterial color="#e2e8f0" metalness={0.8} />
-                </mesh>
-                <mesh position={[1.75, -1.35, 0]}>
-                  <cylinderGeometry args={[0.32, 0.35, 0.08, 16]} />
-                  <meshStandardMaterial color="#f59e0b" metalness={0.8} />
-                </mesh>
-              </group>
-            ))}
-          </group>
-        )}
-
-        {craft.id === 'rover' && (
-          <group>
-            <mesh position={[0, 0, 0]}>
-              <boxGeometry args={[1.6, 0.55, 1.1]} />
-              <meshStandardMaterial color="#f59e0b" metalness={0.75} roughness={0.3} />
-            </mesh>
-            <mesh position={[0, 0.3, 0]}>
-              <boxGeometry args={[2.1, 0.06, 1.6]} />
-              <meshStandardMaterial color="#1e3a8a" metalness={0.9} roughness={0.15} />
-            </mesh>
-            <mesh position={[0.6, 0.75, 0.35]}>
-              <cylinderGeometry args={[0.05, 0.05, 0.95]} />
-              <meshStandardMaterial color="#e2e8f0" metalness={0.8} />
-            </mesh>
-            <mesh position={[0.6, 1.25, 0.35]}>
-              <boxGeometry args={[0.32, 0.22, 0.42]} />
-              <meshStandardMaterial color="#f8fafc" metalness={0.6} />
-            </mesh>
-            <mesh position={[1.15, -0.1, 0]} rotation={[0, 0, -0.5]}>
-              <cylinderGeometry args={[0.04, 0.04, 0.9]} />
-              <meshStandardMaterial color="#94a3b8" metalness={0.8} />
-            </mesh>
-            {[-0.85, 0, 0.85].map((xPos, idx) => (
-              <React.Fragment key={idx}>
-                <mesh position={[xPos, -0.65, 0.85]} rotation={[Math.PI / 2, 0, 0]}>
-                  <cylinderGeometry args={[0.32, 0.32, 0.22, 20]} />
-                  <meshStandardMaterial color="#1e293b" metalness={0.7} roughness={0.5} />
-                </mesh>
-                <mesh position={[xPos, -0.65, -0.85]} rotation={[Math.PI / 2, 0, 0]}>
-                  <cylinderGeometry args={[0.32, 0.32, 0.22, 20]} />
-                  <meshStandardMaterial color="#1e293b" metalness={0.7} roughness={0.5} />
-                </mesh>
-              </React.Fragment>
-            ))}
-          </group>
-        )}
-
-        {craft.id === 'voyager' && (
-          <group>
-            <mesh position={[0, 0.65, 0]} rotation={[Math.PI, 0, 0]}>
-              <coneGeometry args={[1.55, 0.45, 32, 1, true]} />
-              <meshStandardMaterial color="#f8fafc" side={THREE.DoubleSide} roughness={0.3} />
-            </mesh>
-            <mesh position={[0, -0.2, 0]}>
-              <cylinderGeometry args={[0.65, 0.65, 0.55, 10]} />
-              <meshStandardMaterial color="#334155" metalness={0.8} roughness={0.3} />
-            </mesh>
-            <mesh position={[0.52, -0.2, 0.42]} rotation={[0, Math.PI / 4, Math.PI / 2]}>
-              <cylinderGeometry args={[0.24, 0.24, 0.04, 24]} />
-              <meshStandardMaterial color="#fbbf24" metalness={0.95} roughness={0.1} />
-            </mesh>
-            <mesh position={[-1.25, -0.45, 0]} rotation={[0, 0, Math.PI / 2.3]}>
-              <cylinderGeometry args={[0.08, 0.12, 1.6, 12]} />
-              <meshStandardMaterial color="#64748b" metalness={0.8} />
-            </mesh>
-          </group>
-        )}
-
-        {craft.id === 'jwst' && (
-          <group>
-            {[-0.85, -0.75, -0.65].map((yPos, idx) => (
-              <mesh key={idx} position={[0, yPos, 0]} rotation={[0, Math.PI / 4, 0]}>
-                <cylinderGeometry args={[1.85 - idx * 0.1, 1.85 - idx * 0.1, 0.03, 4]} />
-                <meshStandardMaterial color="#cbd5e1" metalness={0.9} roughness={0.2} />
-              </mesh>
-            ))}
-            <mesh position={[0, 0.55, -0.1]} rotation={[Math.PI / 2, 0, 0]}>
-              <cylinderGeometry args={[1.25, 1.25, 0.12, 6]} />
-              <meshStandardMaterial color="#fbbf24" metalness={0.95} roughness={0.1} />
-            </mesh>
-            <mesh position={[0, 0.55, 1.35]} rotation={[Math.PI / 2, 0, 0]}>
-              <cylinderGeometry args={[0.22, 0.22, 0.08, 16]} />
-              <meshStandardMaterial color="#f59e0b" metalness={0.9} />
-            </mesh>
-            <mesh position={[0, 0.95, 0.6]} rotation={[0.95, 0, 0]}>
-              <cylinderGeometry args={[0.03, 0.03, 1.6]} />
-              <meshStandardMaterial color="#475569" />
-            </mesh>
-          </group>
-        )}
-
-        {craft.id === 'iss' && (
-          <group>
-            <mesh position={[0, 0.2, 0]} rotation={[0, 0, Math.PI / 2]}>
-              <cylinderGeometry args={[0.08, 0.08, 3.6, 12]} />
-              <meshStandardMaterial color="#cbd5e1" metalness={0.8} roughness={0.3} />
-            </mesh>
-            <mesh position={[0, 0, 0]} rotation={[Math.PI / 2, 0, 0]}>
-              <cylinderGeometry args={[0.26, 0.26, 2.2, 24]} />
-              <meshStandardMaterial color="#f8fafc" metalness={0.6} roughness={0.3} />
-            </mesh>
-            {[-1.55, -1.1, 1.1, 1.55].map((xPos, i) => (
-              <mesh key={i} position={[xPos, 0.2, 0]}>
-                <boxGeometry args={[0.32, 2.3, 0.04]} />
-                <meshStandardMaterial color="#d97706" metalness={0.9} roughness={0.15} />
-              </mesh>
-            ))}
-          </group>
-        )}
-
-        {craft.id === 'hubble' && (
-          <group>
-            <mesh position={[0, 0, 0]} rotation={[Math.PI / 4, 0, 0]}>
-              <cylinderGeometry args={[0.52, 0.58, 2.2, 32]} />
-              <meshStandardMaterial color="#e2e8f0" metalness={0.85} roughness={0.2} />
-            </mesh>
-            <mesh position={[-1.25, 0, 0]}>
-              <boxGeometry args={[1.3, 0.04, 0.55]} />
-              <meshStandardMaterial color="#1d4ed8" metalness={0.9} roughness={0.15} />
-            </mesh>
-            <mesh position={[1.25, 0, 0]}>
-              <boxGeometry args={[1.3, 0.04, 0.55]} />
-              <meshStandardMaterial color="#1d4ed8" metalness={0.9} roughness={0.15} />
-            </mesh>
-          </group>
-        )}
-
-        {craft.hotspots.map((hotspot) => {
-          const isScanned = scannedHotspots.includes(hotspot.id);
-          const isActive = activeHotspot?.id === hotspot.id;
-
-          return (
-            <Html key={hotspot.id} position={hotspot.position} center distanceFactor={10}>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onSelectHotspot(hotspot);
-                }}
-                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-mono font-bold transition-all shadow-lg border ${
-                  isActive
-                    ? 'bg-amber-400 text-slate-950 border-white scale-110'
-                    : isScanned
-                    ? 'bg-emerald-500/90 text-slate-950 border-emerald-200'
-                    : 'bg-cyan-500/90 text-slate-950 border-white animate-pulse'
-                }`}
-              >
-                <span>{isScanned ? '✓' : '🔍'}</span>
-                <span className="whitespace-nowrap">{hotspot.name.split(' ')[0]}</span>
-              </button>
-            </Html>
-          );
-        })}
-      </group>
-    </Float>
-  );
-};
 
 // ============================================================================
 // HIGH-FIDELITY 3D GLB ASSET MAPPINGS & RUNTIME ENGINE
 // ============================================================================
 
 export const PLANET_GLB_MAP: Record<string, string> = {
-  sun: '/models/sun_model.glb?v=3',
-  mercury: '/models/mercury_planet.glb?v=3',
-  venus: '/models/venus_v1.1.glb?v=3',
-  earth: '/models/earth.glb?v=3',
-  moon: '/models/moon.glb?v=3',
-  mars: '/models/mars.glb?v=3',
-  jupiter: '/models/jupiter.glb?v=3',
-  saturn: '/models/saturn.glb?v=3',
-  uranus: '/models/realistic_uranus_4k.glb?v=3',
-  neptune: '/models/neptune_v2.glb?v=3',
-  ceres: '/models/asteroid_with_minerals.glb?v=3',
+  sun: '/models/sun_model.glb',
+  mercury: '/models/mercury_planet.glb',
+  venus: '/models/venus_v1.1.glb',
+  earth: '/models/earth.glb',
+  moon: '/models/moon.glb',
+  mars: '/models/mars.glb',
+  jupiter: '/models/jupiter.glb',
+  saturn: '/models/saturn.glb',
+  uranus: '/models/realistic_uranus_4k.glb',
+  neptune: '/models/neptune_v2.glb',
+  ceres: '/models/asteroid_with_minerals.glb',
 };
 
 export const SPACECRAFT_GLB_MAP: Record<string, string> = {
-  apollo: '/models/apollo_lunar_module.glb?v=3',
-  rover: '/models/perseverance_mars_rover.glb?v=3',
-  voyager: '/models/voyager-1.glb?v=3',
-  jwst: '/models/jwst_james_webb_space_telescope.glb?v=3',
-  iss: '/models/iss-_international_space_station.glb?v=3',
-  hubble: '/models/cassini_huygens.glb?v=3',
-  cassini: '/models/cassini_huygens.glb?v=3',
-  xwing: '/models/x-wing_hanger_diorama.glb?v=3',
+  apollo: '/models/apollo_lunar_module.glb',
+  rover: '/models/perseverance_mars_rover.glb',
+  voyager: '/models/voyager-1.glb',
+  jwst: '/models/jwst_james_webb_space_telescope.glb',
+  iss: '/models/iss-_international_space_station.glb',
+  hubble: '/models/cassini_huygens.glb',
+  cassini: '/models/cassini_huygens.glb',
+  xwing: '/models/x-wing_hanger_diorama.glb',
 };
 
 export const ASTEROID_GLB_MODELS = [
-  '/models/asteroid.glb?v=3',
-  '/models/asteroid-2.glb?v=3',
-  '/models/asteroid_with_minerals.glb?v=3',
+  '/models/asteroid.glb',
+  '/models/asteroid-2.glb',
+  '/models/asteroid_with_minerals.glb',
 ];
+
+// Preload all 3D GLB assets in browser memory for instantaneous 0-delay model switches
+if (typeof window !== 'undefined') {
+  Object.values(PLANET_GLB_MAP).forEach((url) => useGLTF.preload(url));
+  Object.values(SPACECRAFT_GLB_MAP).forEach((url) => useGLTF.preload(url));
+  ASTEROID_GLB_MODELS.forEach((url) => useGLTF.preload(url));
+}
 
 // --- Resilient Error Boundary for 3D GLB Models ---
 class GLBErrorBoundary extends Component<
@@ -1477,12 +902,6 @@ const PlanetGLBInner: React.FC<PlanetGLBProps> = ({
   const modelUrl = PLANET_GLB_MAP[planet.id] || PLANET_GLB_MAP.earth;
   const { scene } = useGLTF(modelUrl);
   const groupRef = useRef<THREE.Group>(null!);
-  const cloudsRef = useRef<THREE.Mesh>(null!);
-  const earthExtraTextures = useMemo(
-    () => (planet.id === 'earth' ? getPlanetTextures('earth') : null),
-    [planet.id]
-  );
-
   const clonedScene = useMemo(() => {
     const clone = scene.clone(true);
     clone.updateMatrixWorld(true);
@@ -1536,10 +955,9 @@ const PlanetGLBInner: React.FC<PlanetGLBProps> = ({
                     ? 0.04
                     : 0.02;
               }
-              if (planet.id === 'earth' && !isRing && earthExtraTextures?.specularMap) {
-                stdMat.roughnessMap = earthExtraTextures.specularMap;
-                stdMat.roughness = 0.72;
-                stdMat.metalness = 0.08;
+              if (planet.id === 'earth' && !isRing) {
+                stdMat.roughness = 0.68;
+                stdMat.metalness = 0.1;
               }
             }
             if (isRing) {
@@ -1579,7 +997,7 @@ const PlanetGLBInner: React.FC<PlanetGLBProps> = ({
     const wrapper = new THREE.Group();
     wrapper.add(clone);
     return wrapper;
-  }, [scene, radius, planet.id, earthExtraTextures]);
+  }, [scene, radius, planet.id]);
 
   const tilt = useMemo(() => {
     switch (planet.id) {
@@ -1604,9 +1022,6 @@ const PlanetGLBInner: React.FC<PlanetGLBProps> = ({
     if (groupRef.current) {
       groupRef.current.rotation.y += delta * (planet.id === 'sun' ? spinSpeed * 0.5 : spinSpeed);
     }
-    if (cloudsRef.current) {
-      cloudsRef.current.rotation.y += delta * (spinSpeed * 1.35);
-    }
   });
 
   const atmosphere = ATMOSPHERE_PROFILES[planet.id];
@@ -1624,22 +1039,6 @@ const PlanetGLBInner: React.FC<PlanetGLBProps> = ({
       >
         <primitive object={clonedScene} />
       </group>
-
-      {/* Earth's Live Rotating 3D Atmospheric Cloud Deck over 8K earth.glb */}
-      {planet.id === 'earth' && earthExtraTextures?.cloudsMap && (
-        <mesh ref={cloudsRef}>
-          <sphereGeometry args={[radius * 1.018, 64, 64]} />
-          <meshStandardMaterial
-            map={earthExtraTextures.cloudsMap}
-            bumpMap={earthExtraTextures.cloudsMap}
-            bumpScale={0.015}
-            roughness={0.85}
-            transparent
-            opacity={0.78}
-            depthWrite={false}
-          />
-        </mesh>
-      )}
 
       {/* Atmospheric Rayleigh Scattering Glow around GLB */}
       {atmosphere && (
@@ -1683,15 +1082,151 @@ const PlanetGLBInner: React.FC<PlanetGLBProps> = ({
   );
 };
 
+// --- High-Tech Holographic Target-Lock Fallbacks (Zero CPU Overhead, Zero Double-Model Flash) ---
+const HolographicPlanetLoader: React.FC<{ radius: number; color?: string }> = ({
+  radius,
+  color = '#38bdf8',
+}) => {
+  const ringRef = useRef<THREE.Mesh>(null!);
+  const ring2Ref = useRef<THREE.Mesh>(null!);
+
+  useFrame((_, delta) => {
+    if (ringRef.current) {
+      ringRef.current.rotation.z += delta * 1.8;
+      ringRef.current.rotation.x += delta * 0.9;
+    }
+    if (ring2Ref.current) {
+      ring2Ref.current.rotation.y -= delta * 1.4;
+      ring2Ref.current.rotation.z += delta * 0.7;
+    }
+  });
+
+  return (
+    <group>
+      {/* Holographic Wireframe Globe Core */}
+      <mesh>
+        <sphereGeometry args={[radius, 20, 20]} />
+        <meshBasicMaterial color={color} wireframe transparent opacity={0.25} />
+      </mesh>
+      {/* Target Scanning Radar Rings */}
+      <mesh ref={ringRef}>
+        <ringGeometry args={[radius * 1.15, radius * 1.22, 32]} />
+        <meshBasicMaterial color="#ff3b21" side={THREE.DoubleSide} transparent opacity={0.75} />
+      </mesh>
+      <mesh ref={ring2Ref}>
+        <ringGeometry args={[radius * 1.28, radius * 1.34, 32]} />
+        <meshBasicMaterial color={color} side={THREE.DoubleSide} transparent opacity={0.45} />
+      </mesh>
+    </group>
+  );
+};
+
+const HolographicCraftLoader: React.FC = () => {
+  const ringRef = useRef<THREE.Mesh>(null!);
+  useFrame((_, delta) => {
+    if (ringRef.current) {
+      ringRef.current.rotation.y += delta * 1.6;
+      ringRef.current.rotation.z += delta * 0.8;
+    }
+  });
+
+  return (
+    <group>
+      <mesh ref={ringRef}>
+        <torusGeometry args={[1.5, 0.03, 16, 40]} />
+        <meshBasicMaterial color="#f59e0b" transparent opacity={0.65} />
+      </mesh>
+      <mesh>
+        <octahedronGeometry args={[0.7, 0]} />
+        <meshBasicMaterial color="#38bdf8" wireframe transparent opacity={0.35} />
+      </mesh>
+    </group>
+  );
+};
+
 const PlanetGLBModel: React.FC<PlanetGLBProps> = (props) => {
   return (
-    <GLBErrorBoundary fallback={<TexturedPlanetSphere {...props} />}>
-      <Suspense fallback={<TexturedPlanetSphere {...props} />}>
+    <GLBErrorBoundary fallback={<OrbitingPlanetSphere planet={props.planet} radius={props.radius} isSelected={props.isSelected} onClick={props.onClick} />}>
+      <Suspense fallback={<HolographicPlanetLoader radius={props.radius} color={props.planet.accentColor || props.planet.color} />}>
         <PlanetGLBInner {...props} />
       </Suspense>
     </GLBErrorBoundary>
   );
 };
+
+// --- 3D Authentic Planet Node in the Solar System Orrery ---
+interface OrbitingPlanetProps {
+  planet: PlanetData;
+  timeSpeed: number;
+  showOrbits: boolean;
+  isSelected: boolean;
+  onSelectAndZoom: (planet: PlanetData) => void;
+}
+
+const OrbitingPlanetMesh: React.FC<OrbitingPlanetProps> = ({
+  planet,
+  timeSpeed,
+  showOrbits,
+  isSelected,
+  onSelectAndZoom,
+}) => {
+  const groupRef = useRef<THREE.Group>(null!);
+  const angleRef = useRef<number>(Math.random() * Math.PI * 2);
+
+  useFrame((_, delta) => {
+    if (planet.orbitRadius > 0) {
+      angleRef.current += delta * planet.orbitSpeed * timeSpeed * 0.45;
+      const x = Math.cos(angleRef.current) * planet.orbitRadius;
+      const z = Math.sin(angleRef.current) * planet.orbitRadius;
+      if (groupRef.current) {
+        groupRef.current.position.set(x, 0, z);
+      }
+    }
+  });
+
+  return (
+    <>
+      {showOrbits && planet.orbitRadius > 0 && (
+        <mesh rotation={[-Math.PI / 2, 0, 0]}>
+          <ringGeometry args={[planet.orbitRadius - 0.02, planet.orbitRadius + 0.02, 112]} />
+          <meshBasicMaterial
+            color={isSelected ? '#ff3b21' : '#52525b'}
+            side={THREE.DoubleSide}
+            transparent
+            opacity={isSelected ? 0.85 : 0.32}
+          />
+        </mesh>
+      )}
+
+      <group ref={groupRef} position={[planet.orbitRadius, 0, 0]}>
+        <PlanetGLBModel
+          planet={planet}
+          radius={planet.radiusScale}
+          isSelected={isSelected}
+          onClick={() => onSelectAndZoom(planet)}
+        />
+
+        <Html distanceFactor={18} position={[0, planet.radiusScale + 0.58, 0]} center>
+          <button
+            onClick={() => onSelectAndZoom(planet)}
+            className={`px-2.5 py-0.5 rounded-full text-[10px] font-mono uppercase tracking-wider whitespace-nowrap transition-all border ${
+              isSelected
+                ? 'bg-[#ff3b21] text-white font-bold border-white shadow-lg scale-105'
+                : 'bg-black/85 text-zinc-200 border-zinc-700 hover:border-[#ff3b21] hover:text-white'
+            }`}
+          >
+            {planet.id === 'sun'
+              ? 'THE SUN'
+              : planet.id === 'ceres'
+              ? '1 CERES'
+              : planet.name.split(' ')[0]}
+          </button>
+        </Html>
+      </group>
+    </>
+  );
+};
+
 
 // --- Authentic Spacecraft 3D GLB Model with Bounding-Box Centering & Hotspots ---
 const SpacecraftGLBInner: React.FC<Spacecraft3DSceneProps> = ({
@@ -1787,8 +1322,8 @@ const SpacecraftGLBInner: React.FC<Spacecraft3DSceneProps> = ({
 
 const SpacecraftGLBModel: React.FC<Spacecraft3DSceneProps> = (props) => {
   return (
-    <GLBErrorBoundary fallback={<Spacecraft3DModel {...props} />}>
-      <Suspense fallback={<Spacecraft3DModel {...props} />}>
+    <GLBErrorBoundary fallback={<HolographicCraftLoader />}>
+      <Suspense fallback={<HolographicCraftLoader />}>
         <SpacecraftGLBInner {...props} />
       </Suspense>
     </GLBErrorBoundary>
@@ -1849,6 +1384,30 @@ const FeaturedGLBAsteroid: React.FC<{
   );
 };
 
+// --- Smooth Cinematic Camera Glide Controller (Zero Canvas Unmounting / Recompilation) ---
+const CameraController: React.FC<{
+  viewMode: 'solar-system' | 'planet-closeup' | 'spacecraft';
+  isMobile: boolean;
+}> = ({ viewMode, isMobile }) => {
+  const { camera } = useThree();
+
+  const targetPos = useMemo(() => {
+    if (viewMode === 'solar-system') {
+      return new THREE.Vector3(0, isMobile ? 18 : 16, isMobile ? 30 : 26);
+    }
+    if (viewMode === 'planet-closeup') {
+      return new THREE.Vector3(0, isMobile ? 0.2 : 0.45, isMobile ? 5.2 : 4.4);
+    }
+    return new THREE.Vector3(0, 1.2, isMobile ? 5.2 : 4.5);
+  }, [viewMode, isMobile]);
+
+  useFrame(() => {
+    camera.position.lerp(targetPos, 0.06);
+  });
+
+  return null;
+};
+
 export interface CosmicExplorer3DProps {
   externalPlanetId?: string;
   externalViewMode?: 'solar-system' | 'planet-closeup' | 'spacecraft';
@@ -1891,6 +1450,22 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
   // HUD and Inspector Display Toggles
   const [isForensicDeckCollapsed, setIsForensicDeckCollapsed] = useState<boolean>(false);
   const [isTelemetryHidden, setIsTelemetryHidden] = useState<boolean>(false);
+
+  // Responsive device state & mobile HUD navigation tab ('3d' = unobstructed globe, 'telemetry' = stats sheet, 'forensics' = debris/quiz sheet)
+  const [isMobile, setIsMobile] = useState<boolean>(() =>
+    typeof window !== 'undefined' ? window.innerWidth < 1024 : false
+  );
+  const [, setMobileHudTab] = useState<'3d' | 'telemetry' | 'forensics'>('3d');
+  const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState<boolean>(false);
+  const [mobileDrawerTab, setMobileDrawerTab] = useState<'stats' | 'debris' | 'materials' | 'quiz' | 'missions' | 'subsystems' | 'specs'>('stats');
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth < 1024);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   // Multi-Question Quiz State per Planet
   const [quizIndex, setQuizIndex] = useState<number>(0);
@@ -1961,6 +1536,7 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
 
   // Clicking any planet transitions immediately into its Close-Up Orbital Debris/Meteor View!
   const handleSelectPlanetAndZoom = (planet: PlanetData) => {
+    haptics.medium();
     soundFX.playScanPing();
     setSelectedPlanet(planet);
     setViewMode('planet-closeup');
@@ -1983,6 +1559,7 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
   };
 
   const handleSelectCraft = (craft: SpacecraftData) => {
+    haptics.medium();
     soundFX.playClick();
     setSelectedCraft(craft);
     setActiveHotspot(craft.hotspots[0]);
@@ -1990,6 +1567,7 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
   };
 
   const handleCyclePlanet = (direction: 'next' | 'prev') => {
+    haptics.selection();
     soundFX.playClick();
     const currentIndex = SOLAR_SYSTEM_PLANETS.findIndex((p) => p.id === selectedPlanet.id);
     let nextIndex = direction === 'next' ? currentIndex + 1 : currentIndex - 1;
@@ -2015,17 +1593,19 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
       {/* 1. Full-Screen WebGL Canvas living edge-to-edge */}
       <div className="absolute inset-0 w-full h-full z-0">
         <Canvas
-          key={`${viewMode}-${selectedPlanet.id}`}
+          dpr={[1, Math.min(2, typeof window !== 'undefined' ? window.devicePixelRatio : 1)]}
+          style={{ touchAction: 'none' }}
           camera={{
             position:
               viewMode === 'solar-system'
                 ? [0, 16, 26]
                 : viewMode === 'planet-closeup'
-                ? [0, 0.45, 4.6]
+                ? [0, 0.45, 4.4]
                 : [0, 1.2, 4.5],
             fov: 42,
           }}
         >
+          <CameraController viewMode={viewMode} isMobile={isMobile} />
           <color attach="background" args={['#020306']} />
           <ambientLight intensity={viewMode === 'planet-closeup' ? 0.16 : 0.22} />
           <hemisphereLight args={['#38bdf8', '#020617', 0.25]} />
@@ -2049,7 +1629,7 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
               ))}
             </group>
           ) : viewMode === 'planet-closeup' ? (
-            <group position={typeof window !== 'undefined' && window.innerWidth < 1024 ? [0, 0.25, 0] : [1.45, 0, 0]}>
+            <group position={isMobile ? [0, 0, 0] : [1.45, 0, 0]}>
               <Float speed={1.1} rotationIntensity={0.05} floatIntensity={0.1}>
                 <PlanetGLBModel planet={selectedPlanet} radius={1.42} isSelected={false} />
               </Float>
@@ -2070,12 +1650,15 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
           )}
 
           <OrbitControls
+            enableDamping={true}
+            dampingFactor={0.06}
+            touches={{ ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN }}
             enablePan={viewMode === 'solar-system'}
-            minDistance={viewMode === 'solar-system' ? 5 : 2.2}
-            maxDistance={viewMode === 'solar-system' ? 44 : 9.0}
+            minDistance={viewMode === 'solar-system' ? 5 : 2.0}
+            maxDistance={viewMode === 'solar-system' ? 44 : 9.5}
             target={
               viewMode === 'planet-closeup'
-                ? (typeof window !== 'undefined' && window.innerWidth < 1024 ? [0, 0.1, 0] : [0.75, 0, 0])
+                ? (isMobile ? [0, 0, 0] : [0.75, 0, 0])
                 : [0, 0, 0]
             }
           />
@@ -2092,46 +1675,49 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
           <div className="absolute bottom-4 right-4 text-xs font-mono text-zinc-600 select-none">+</div>
 
           {/* Floating Sub-Mode Selector Bar (Top-Center) */}
-          <div className="fixed top-16 left-1/2 -translate-x-1/2 z-20 pointer-events-auto flex items-center gap-1.5 p-1 rounded-full bg-black/85 backdrop-blur-xl border border-zinc-800 shadow-2xl">
+          <div className="fixed top-14 sm:top-16 left-1/2 -translate-x-1/2 z-20 pointer-events-auto flex items-center gap-1 sm:gap-1.5 p-1 rounded-full bg-black/85 backdrop-blur-xl border border-zinc-800 shadow-2xl max-w-[calc(100vw-1rem)] overflow-x-auto no-scrollbar">
             <button
               onClick={() => {
                 soundFX.playClick();
                 setViewMode('solar-system');
+                setMobileHudTab('3d');
                 if (onViewModeChange) onViewModeChange('solar-system');
               }}
-              className={`px-3 py-1 rounded-full text-[11px] font-mono uppercase tracking-wider flex items-center gap-1.5 transition-all ${
+              className={`px-2.5 sm:px-3 py-1 rounded-full text-[10px] sm:text-[11px] font-mono uppercase tracking-wider flex items-center gap-1 sm:gap-1.5 transition-all whitespace-nowrap ${
                 viewMode === 'solar-system'
                   ? 'bg-white text-black font-bold shadow-sm'
                   : 'text-zinc-400 hover:text-white'
               }`}
             >
               <Orbit className="h-3 w-3" />
-              <span>01 // Solar System</span>
+              <span>01 // Solar</span>
             </button>
 
             <button
               onClick={() => {
                 soundFX.playClick();
                 setViewMode('planet-closeup');
+                setMobileHudTab('3d');
                 if (onViewModeChange) onViewModeChange('planet-closeup');
               }}
-              className={`px-3 py-1 rounded-full text-[11px] font-mono uppercase tracking-wider flex items-center gap-1.5 transition-all ${
+              className={`px-2.5 sm:px-3 py-1 rounded-full text-[10px] sm:text-[11px] font-mono uppercase tracking-wider flex items-center gap-1 sm:gap-1.5 transition-all whitespace-nowrap ${
                 viewMode === 'planet-closeup'
                   ? 'bg-[#ff3b21] text-white font-bold shadow-sm'
                   : 'text-zinc-400 hover:text-white'
               }`}
             >
               <Crosshair className="h-3 w-3" />
-              <span>02 // {selectedPlanet.name.split(' ')[0]} Orbit</span>
+              <span>02 // {selectedPlanet.name.split(' ')[0]}</span>
             </button>
 
             <button
               onClick={() => {
                 soundFX.playClick();
                 setViewMode('spacecraft');
+                setMobileHudTab('3d');
                 if (onViewModeChange) onViewModeChange('spacecraft');
               }}
-              className={`px-3 py-1 rounded-full text-[11px] font-mono uppercase tracking-wider flex items-center gap-1.5 transition-all ${
+              className={`px-2.5 sm:px-3 py-1 rounded-full text-[10px] sm:text-[11px] font-mono uppercase tracking-wider flex items-center gap-1 sm:gap-1.5 transition-all whitespace-nowrap ${
                 viewMode === 'spacecraft'
                   ? 'bg-amber-400 text-black font-bold shadow-sm'
                   : 'text-zinc-400 hover:text-white'
@@ -2144,25 +1730,44 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
             {/* Toggle HUD button */}
             <button
               onClick={() => setIsTelemetryHidden((prev) => !prev)}
-              className="p-1 rounded-full text-zinc-400 hover:text-white ml-0.5"
+              className="p-1 rounded-full text-zinc-400 hover:text-white ml-0.5 shrink-0"
               title={isTelemetryHidden ? 'Show Telemetry HUD (Press H)' : 'Hide Telemetry HUD (Press H)'}
             >
               {isTelemetryHidden ? <Eye className="h-3.5 w-3.5 text-cyan-400" /> : <EyeOff className="h-3.5 w-3.5" />}
             </button>
 
             {/* 3D Asset Indicator Badge */}
-            <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-950/70 border border-emerald-500/40 text-[9px] font-mono text-emerald-400">
+            <div className="hidden md:flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-950/70 border border-emerald-500/40 text-[9px] font-mono text-emerald-400 shrink-0">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
               <span>20 GLB MODELS ONLINE</span>
             </div>
           </div>
 
           {/* LEFT FLOATING TELEMETRY COLUMN */}
-          {!isTelemetryHidden && (
+          {!isTelemetryHidden && !isMobile && (
             <>
               {viewMode === 'planet-closeup' && (
-                <div className="fixed left-4 sm:left-6 top-28 bottom-6 w-80 sm:w-84 max-w-[calc(100vw-2rem)] z-20 pointer-events-auto flex flex-col justify-between overflow-y-auto no-scrollbar gap-3 animate-in fade-in slide-in-from-left-4 duration-300">
+                <div
+                  className={
+                    isMobile
+                      ? 'fixed inset-x-3 sm:inset-x-6 top-24 bottom-24 z-30 pointer-events-auto max-w-md mx-auto flex flex-col justify-between overflow-y-auto no-scrollbar gap-3 animate-in fade-in slide-in-from-bottom-4 duration-300'
+                      : 'fixed left-4 sm:left-6 top-28 bottom-6 w-80 sm:w-84 max-w-[calc(100vw-2rem)] z-20 pointer-events-auto flex flex-col justify-between overflow-y-auto no-scrollbar gap-3 animate-in fade-in slide-in-from-left-4 duration-300'
+                  }
+                >
                   <div className="holo-panel-3d border border-zinc-800/90 rounded-2xl p-4 sm:p-5 space-y-4">
+                    {/* Mobile Close Bar */}
+                    {isMobile && (
+                      <div className="flex items-center justify-between pb-2 border-b border-zinc-800">
+                        <span className="text-[10px] font-mono text-zinc-400 uppercase tracking-widest font-bold">Orbital Telemetry</span>
+                        <button
+                          onClick={() => setMobileHudTab('3d')}
+                          className="px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-white flex items-center gap-1 text-[11px] font-mono"
+                        >
+                          <X className="h-3 w-3" />
+                          <span>Close</span>
+                        </button>
+                      </div>
+                    )}
                     {/* Sector Index & Category */}
                     <div>
                       <div className="flex items-center justify-between">
@@ -2292,8 +1897,27 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
               )}
 
               {viewMode === 'solar-system' && (
-                <div className="fixed left-4 sm:left-6 top-28 w-80 sm:w-84 max-w-[calc(100vw-2rem)] z-20 pointer-events-auto flex flex-col gap-3 animate-in fade-in slide-in-from-left-4 duration-300">
+                <div
+                  className={
+                    isMobile
+                      ? 'fixed inset-x-3 sm:inset-x-6 top-24 bottom-24 z-30 pointer-events-auto max-w-md mx-auto flex flex-col gap-3 animate-in fade-in slide-in-from-bottom-4 duration-300'
+                      : 'fixed left-4 sm:left-6 top-28 w-80 sm:w-84 max-w-[calc(100vw-2rem)] z-20 pointer-events-auto flex flex-col gap-3 animate-in fade-in slide-in-from-left-4 duration-300'
+                  }
+                >
                   <div className="holo-panel-3d border border-zinc-800/90 rounded-2xl p-4 sm:p-5 space-y-4">
+                    {/* Mobile Close Bar */}
+                    {isMobile && (
+                      <div className="flex items-center justify-between pb-2 border-b border-zinc-800">
+                        <span className="text-[10px] font-mono text-zinc-400 uppercase tracking-widest font-bold">Observatory Controls</span>
+                        <button
+                          onClick={() => setMobileHudTab('3d')}
+                          className="px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-white flex items-center gap-1 text-[11px] font-mono"
+                        >
+                          <X className="h-3 w-3" />
+                          <span>Close</span>
+                        </button>
+                      </div>
+                    )}
                     <div>
                       <div className="text-[10px] font-mono uppercase tracking-widest text-[#ff3b21] font-bold">
                         ORBITAL OBSERVATORY
@@ -2356,8 +1980,27 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
               )}
 
               {viewMode === 'spacecraft' && (
-                <div className="fixed left-4 sm:left-6 top-28 bottom-6 w-80 sm:w-84 max-w-[calc(100vw-2rem)] z-20 pointer-events-auto flex flex-col justify-between overflow-y-auto no-scrollbar gap-3 animate-in fade-in slide-in-from-left-4 duration-300">
+                <div
+                  className={
+                    isMobile
+                      ? 'fixed inset-x-3 sm:inset-x-6 top-24 bottom-24 z-30 pointer-events-auto max-w-md mx-auto flex flex-col justify-between overflow-y-auto no-scrollbar gap-3 animate-in fade-in slide-in-from-bottom-4 duration-300'
+                      : 'fixed left-4 sm:left-6 top-28 bottom-6 w-80 sm:w-84 max-w-[calc(100vw-2rem)] z-20 pointer-events-auto flex flex-col justify-between overflow-y-auto no-scrollbar gap-3 animate-in fade-in slide-in-from-left-4 duration-300'
+                  }
+                >
                   <div className="holo-panel-3d border border-zinc-800/90 rounded-2xl p-4 sm:p-5 space-y-3">
+                    {/* Mobile Close Bar */}
+                    {isMobile && (
+                      <div className="flex items-center justify-between pb-2 border-b border-zinc-800">
+                        <span className="text-[10px] font-mono text-zinc-400 uppercase tracking-widest font-bold">Fleet Selector</span>
+                        <button
+                          onClick={() => setMobileHudTab('3d')}
+                          className="px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-white flex items-center gap-1 text-[11px] font-mono"
+                        >
+                          <X className="h-3 w-3" />
+                          <span>Close</span>
+                        </button>
+                      </div>
+                    )}
                     <div>
                       <div className="text-[10px] font-mono uppercase tracking-widest text-amber-400 font-bold">
                         FLEET HANGAR // 6 PROBES
@@ -2378,7 +2021,10 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
                           return (
                             <button
                               key={craft.id}
-                              onClick={() => handleSelectCraft(craft)}
+                              onClick={() => {
+                                handleSelectCraft(craft);
+                                if (isMobile) setMobileHudTab('3d');
+                              }}
                               className={`p-2 rounded-xl border text-left transition-all ${
                                 active
                                   ? 'bg-amber-500/20 border-amber-400 text-white'
@@ -2409,9 +2055,9 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
           )}
 
           {/* RIGHT FLOATING FORENSIC DECK (ZAJNO 5-TAB CARDS) */}
-          {!isTelemetryHidden && viewMode !== 'spacecraft' && (
+          {!isTelemetryHidden && !isMobile && viewMode !== 'spacecraft' && (
             <>
-              {isForensicDeckCollapsed ? (
+              {isForensicDeckCollapsed && !isMobile ? (
                 <div className="fixed right-4 sm:right-6 top-28 z-20 pointer-events-auto">
                   <button
                     onClick={() => setIsForensicDeckCollapsed(false)}
@@ -2423,13 +2069,19 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
                   </button>
                 </div>
               ) : (
-                <div className="fixed right-4 sm:right-6 top-28 bottom-6 w-96 max-w-[calc(100vw-2rem)] z-20 pointer-events-auto flex flex-col justify-start transition-all duration-300">
+                <div
+                  className={
+                    isMobile
+                      ? 'fixed inset-x-3 sm:inset-x-6 top-24 bottom-24 z-30 pointer-events-auto max-w-md mx-auto flex flex-col justify-start transition-all duration-300 animate-in fade-in slide-in-from-bottom-4'
+                      : 'fixed right-4 sm:right-6 top-28 bottom-6 w-96 max-w-[calc(100vw-2rem)] z-20 pointer-events-auto flex flex-col justify-start transition-all duration-300'
+                  }
+                >
                   <TiltCard3D intensity={2} className="holo-panel-3d border border-zinc-800/90 rounded-2xl p-4 sm:p-5 flex flex-col max-h-full overflow-hidden shadow-2xl">
                     {/* Deck Header */}
                     <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
                       <div className="flex items-center gap-2.5">
                         <div
-                          className="w-4 h-4 rounded-full shadow-sm"
+                          className="w-4 h-4 rounded-full shadow-sm shrink-0"
                           style={{ backgroundColor: selectedPlanet.color }}
                         />
                         <div>
@@ -2443,13 +2095,23 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
                       </div>
 
                       <div className="flex items-center gap-1.5">
-                        <button
-                          onClick={() => setIsForensicDeckCollapsed(true)}
-                          className="p-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-400 hover:text-white"
-                          title="Minimize Forensic Deck"
-                        >
-                          <Minimize2 className="h-3.5 w-3.5" />
-                        </button>
+                        {isMobile ? (
+                          <button
+                            onClick={() => setMobileHudTab('3d')}
+                            className="p-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-400 hover:text-white"
+                            title="Close Deck"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => setIsForensicDeckCollapsed(true)}
+                            className="p-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-400 hover:text-white"
+                            title="Minimize Forensic Deck"
+                          >
+                            <Minimize2 className="h-3.5 w-3.5" />
+                          </button>
+                        )}
                       </div>
                     </div>
 
@@ -2850,10 +2512,16 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
           )}
 
           {/* RIGHT SPACECRAFT INSPECTOR (when in Spacecraft Hangar mode) */}
-          {!isTelemetryHidden && viewMode === 'spacecraft' && (
-            <div className="fixed right-4 sm:right-6 top-28 bottom-6 w-96 max-w-[calc(100vw-2rem)] z-20 pointer-events-auto flex flex-col justify-start transition-all duration-300">
+          {!isTelemetryHidden && !isMobile && viewMode === 'spacecraft' && (
+            <div
+              className={
+                isMobile
+                  ? 'fixed inset-x-3 sm:inset-x-6 top-24 bottom-24 z-30 pointer-events-auto max-w-md mx-auto flex flex-col justify-start transition-all duration-300 animate-in fade-in slide-in-from-bottom-4'
+                  : 'fixed right-4 sm:right-6 top-28 bottom-6 w-96 max-w-[calc(100vw-2rem)] z-20 pointer-events-auto flex flex-col justify-start transition-all duration-300'
+              }
+            >
               <TiltCard3D intensity={2} className="holo-panel-3d border border-zinc-800/90 rounded-2xl p-4 sm:p-5 flex flex-col max-h-full overflow-y-auto no-scrollbar shadow-2xl space-y-3.5">
-                <div className="border-b border-zinc-800 pb-3">
+                <div className="border-b border-zinc-800 pb-3 flex items-start justify-between">
                   <div className="flex items-center gap-2.5">
                     <span className="text-3xl animate-float-3d">{selectedCraft.badgeEmoji}</span>
                     <div>
@@ -2863,8 +2531,17 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
                       <h2 className="text-lg font-bold text-white">{selectedCraft.name}</h2>
                     </div>
                   </div>
-                  <p className="text-xs text-zinc-300 mt-2 leading-relaxed">{selectedCraft.summary}</p>
+                  {isMobile && (
+                    <button
+                      onClick={() => setMobileHudTab('3d')}
+                      className="p-1 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white"
+                      title="Close"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  )}
                 </div>
+                <p className="text-xs text-zinc-300 mt-1 leading-relaxed">{selectedCraft.summary}</p>
 
                 <div className="grid grid-cols-2 gap-2 font-mono">
                   <div className="bg-black border border-zinc-800 rounded-lg p-2">
@@ -2929,21 +2606,470 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
             </div>
           )}
 
+          {/* NATIVE MOBILE FORENSIC & TELEMETRY DRAWER SHEET (< 1024px) */}
+          {isMobile && isMobileDrawerOpen && (
+            <div
+              className="fixed inset-0 z-50 pointer-events-auto flex flex-col justify-end bg-black/70 backdrop-blur-sm animate-in fade-in duration-200"
+              onClick={() => {
+                haptics.light();
+                setIsMobileDrawerOpen(false);
+              }}
+            >
+              <div
+                onClick={(e) => e.stopPropagation()}
+                className="w-full max-h-[84vh] bg-zinc-950/98 backdrop-blur-2xl border-t border-zinc-700/80 rounded-t-3xl shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-bottom duration-300 pb-[max(1rem,env(safe-area-inset-bottom))]"
+              >
+                {/* Top Drag Handle */}
+                <div
+                  className="w-12 h-1.5 rounded-full bg-zinc-600/80 mx-auto mt-3 mb-2 shrink-0 cursor-pointer"
+                  onClick={() => {
+                    haptics.light();
+                    setIsMobileDrawerOpen(false);
+                  }}
+                />
+
+                {/* Sheet Header */}
+                <div className="flex items-center justify-between px-4 py-2.5 border-b border-zinc-800 shrink-0">
+                  <div className="flex items-center gap-2.5">
+                    <div
+                      className="w-4 h-4 rounded-full shadow-sm shrink-0"
+                      style={{ backgroundColor: viewMode === 'spacecraft' ? '#f59e0b' : selectedPlanet.color }}
+                    />
+                    <div>
+                      <div className="flex items-center gap-1.5 leading-none">
+                        <span className="text-sm font-bold text-white uppercase tracking-tight">
+                          {viewMode === 'spacecraft' ? selectedCraft.name : selectedPlanet.name}
+                        </span>
+                        {viewMode !== 'spacecraft' && (
+                          <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-300">
+                            {selectedPlanet.gravityRatio}g
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[10px] font-mono text-[#ff3b21] uppercase tracking-wider font-semibold">
+                        {viewMode === 'spacecraft'
+                          ? `${selectedCraft.year} • ${selectedCraft.destination}`
+                          : `${selectedPlanet.category} • ${selectedPlanet.moonsCount} MOONS`}
+                      </span>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      haptics.light();
+                      setIsMobileDrawerOpen(false);
+                    }}
+                    className="p-1.5 rounded-full bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white active:scale-90 transition-transform"
+                    title="Close Drawer"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+
+                {/* Segmented Tab Strip */}
+                {viewMode === 'planet-closeup' ? (
+                  <div className="flex items-center gap-1.5 px-3 py-2 overflow-x-auto no-scrollbar border-b border-zinc-800 bg-black/60 shrink-0">
+                    {[
+                      { id: 'stats', label: 'Telemetry', icon: <Scale className="h-3 w-3" /> },
+                      { id: 'debris', label: 'Debris Risk', icon: <ShieldAlert className="h-3 w-3" /> },
+                      { id: 'materials', label: 'Materials', icon: <Compass className="h-3 w-3" /> },
+                      { id: 'quiz', label: 'Cadet Quiz', icon: <Sparkles className="h-3 w-3" /> },
+                      { id: 'missions', label: 'Missions', icon: <Rocket className="h-3 w-3" /> },
+                    ].map((tab) => (
+                      <button
+                        key={tab.id}
+                        onClick={() => {
+                          haptics.selection();
+                          setMobileDrawerTab(tab.id as any);
+                        }}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-mono uppercase tracking-wider whitespace-nowrap shrink-0 transition-all ${
+                          mobileDrawerTab === tab.id
+                            ? 'bg-[#ff3b21] text-white font-bold shadow-md'
+                            : 'bg-zinc-900/90 text-zinc-400 hover:text-white'
+                        }`}
+                      >
+                        {tab.icon}
+                        <span>{tab.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5 px-3 py-2 overflow-x-auto no-scrollbar border-b border-zinc-800 bg-black/60 shrink-0">
+                    {[
+                      { id: 'subsystems', label: 'Hardware Subsystems', icon: <Rocket className="h-3 w-3" /> },
+                      { id: 'specs', label: 'Engineering Specs', icon: <Scale className="h-3 w-3" /> },
+                    ].map((tab) => (
+                      <button
+                        key={tab.id}
+                        onClick={() => {
+                          haptics.selection();
+                          setMobileDrawerTab(tab.id as any);
+                        }}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-mono uppercase tracking-wider whitespace-nowrap shrink-0 transition-all ${
+                          mobileDrawerTab === tab.id
+                            ? 'bg-amber-400 text-black font-bold shadow-md'
+                            : 'bg-zinc-900/90 text-zinc-400 hover:text-white'
+                        }`}
+                      >
+                        {tab.icon}
+                        <span>{tab.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Scrollable Body Content */}
+                <div className="overflow-y-auto p-4 space-y-4 no-scrollbar">
+                  {viewMode === 'planet-closeup' && (
+                    <>
+                      {/* TAB 1: TELEMETRY & STATS */}
+                      {mobileDrawerTab === 'stats' && (
+                        <div className="space-y-3 animate-in fade-in duration-200">
+                          {/* Metrics Grid */}
+                          <div className="grid grid-cols-2 gap-2 font-mono">
+                            <div className="bg-black/80 border border-zinc-800 rounded-xl p-2.5">
+                              <div className="text-[9px] text-zinc-400 uppercase">ESCAPE VELOCITY</div>
+                              <div className="text-xs font-bold text-emerald-400 mt-0.5">{selectedPlanet.escapeVelocity}</div>
+                            </div>
+                            <div className="bg-black/80 border border-zinc-800 rounded-xl p-2.5">
+                              <div className="text-[9px] text-zinc-400 uppercase">SURFACE TEMP</div>
+                              <div className="text-xs font-bold text-amber-300 mt-0.5">{selectedPlanet.avgTemp}</div>
+                            </div>
+                            <div className="bg-black/80 border border-zinc-800 rounded-xl p-2.5">
+                              <div className="text-[9px] text-zinc-400 uppercase">DAY LENGTH</div>
+                              <div className="text-xs font-bold text-white mt-0.5 truncate">{selectedPlanet.dayLength}</div>
+                            </div>
+                            <div className="bg-black/80 border border-zinc-800 rounded-xl p-2.5">
+                              <div className="text-[9px] text-zinc-400 uppercase">ORBIT VELOCITY</div>
+                              <div className="text-xs font-bold text-purple-300 mt-0.5">{selectedPlanet.orbitalSpeed}</div>
+                            </div>
+                          </div>
+
+                          {/* Atmospheric Trace Meters */}
+                          <div className="space-y-2 bg-black/80 border border-zinc-800 rounded-xl p-3">
+                            <div className="text-[10px] font-mono uppercase text-cyan-400 font-semibold flex items-center justify-between">
+                              <span>Atmospheric Gas Composition</span>
+                              <span className="text-[9px] text-zinc-500 font-mono">Spectroscopy</span>
+                            </div>
+                            <div className="space-y-1.5 pt-1">
+                              {selectedPlanet.atmosphereComposition.map((comp) => (
+                                <div key={comp.gas}>
+                                  <div className="flex justify-between text-[11px] mb-0.5">
+                                    <span className="text-zinc-300">{comp.gas}</span>
+                                    <span className="font-mono text-cyan-300">{comp.percent}%</span>
+                                  </div>
+                                  <div className="w-full h-1.5 bg-zinc-900 rounded-full overflow-hidden">
+                                    <div
+                                      className="h-full rounded-full transition-all duration-500"
+                                      style={{ width: `${Math.max(5, comp.percent)}%`, backgroundColor: comp.color }}
+                                    />
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Quick Facts */}
+                          <div className="bg-black/80 border border-zinc-800 rounded-xl p-3 space-y-1.5">
+                            <div className="text-[10px] font-mono uppercase text-amber-400 font-semibold">
+                              Astrophysical Overview
+                            </div>
+                            <p className="text-xs text-zinc-300 leading-relaxed">
+                              {selectedPlanet.beginnerSummary || selectedPlanet.funFacts[0]}
+                            </p>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* TAB 2: DEBRIS RISK & OPTICS */}
+                      {mobileDrawerTab === 'debris' && (
+                        <div className="space-y-3 animate-in fade-in duration-200">
+                          {/* Risk Badge */}
+                          <div className="bg-[#ff3b21]/15 border border-[#ff3b21]/60 rounded-xl p-3 flex items-center justify-between gap-2 shadow-lg shadow-[#ff3b21]/10">
+                            <div className="flex items-center gap-2">
+                              <ShieldAlert className="h-4 w-4 text-[#ff3b21] shrink-0 animate-pulse" />
+                              <span className="text-[10px] font-mono uppercase font-bold text-white tracking-wider">
+                                ORBITAL RISK LEVEL:
+                              </span>
+                            </div>
+                            <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-[#ff3b21] text-white font-black tracking-wider">
+                              {currentDebrisInfo.riskLevel}
+                            </span>
+                          </div>
+
+                          {/* Debris Counts */}
+                          <div className="grid grid-cols-2 gap-2 font-mono">
+                            <div className="bg-black/80 border border-zinc-800 rounded-xl p-2.5">
+                              <div className="text-[9px] text-zinc-400 uppercase">TRACKED OBJECTS</div>
+                              <div className="text-xs font-bold text-white mt-0.5">{currentDebrisInfo.trackedDebrisCount}</div>
+                            </div>
+                            <div className="bg-black/80 border border-zinc-800 rounded-xl p-2.5">
+                              <div className="text-[9px] text-zinc-400 uppercase">IMPACT VELOCITY</div>
+                              <div className="text-xs font-bold text-[#ff3b21] mt-0.5">{currentDebrisInfo.avgImpactVelocity}</div>
+                            </div>
+                            <div className="col-span-2 bg-black/80 border border-zinc-800 rounded-xl p-2.5">
+                              <div className="text-[9px] text-zinc-400 uppercase">MICRO-DEBRIS ESTIMATE</div>
+                              <div className="text-xs font-bold text-amber-300 mt-0.5">{currentDebrisInfo.microFragmentsEstimate}</div>
+                            </div>
+                          </div>
+
+                          {/* Mitigation Protocol */}
+                          <div className="bg-black/80 border border-zinc-800 rounded-xl p-3 space-y-1">
+                            <div className="text-[10px] font-mono text-[#ff3b21] uppercase font-bold flex items-center gap-1.5">
+                              <AlertTriangle className="h-3.5 w-3.5" />
+                              <span>CLEANUP & REMEDIATION PROTOCOL</span>
+                            </div>
+                            <p className="text-xs text-zinc-300 leading-relaxed pt-1">
+                              {currentDebrisInfo.mitigationAndDefense[0]?.detail || currentDebrisInfo.orbitalObjectsSummary}
+                            </p>
+                          </div>
+
+                          {/* Optics Layer Toggles */}
+                          <div className="bg-black/80 border border-zinc-800 rounded-xl p-3 space-y-2">
+                            <div className="text-[10px] font-mono uppercase text-zinc-400">
+                              3D Visualization Layers:
+                            </div>
+                            <div className="grid grid-cols-3 gap-1.5">
+                              <button
+                                onClick={() => {
+                                  haptics.light();
+                                  setShowDebris(!showDebris);
+                                }}
+                                className={`px-2 py-1.5 rounded-lg text-[10px] font-mono uppercase font-bold transition-all active:scale-95 ${
+                                  showDebris ? 'bg-[#ff3b21] text-white' : 'bg-zinc-900 text-zinc-400'
+                                }`}
+                              >
+                                ● Debris
+                              </button>
+                              <button
+                                onClick={() => {
+                                  haptics.light();
+                                  setShowMeteors(!showMeteors);
+                                }}
+                                className={`px-2 py-1.5 rounded-lg text-[10px] font-mono uppercase font-bold transition-all active:scale-95 ${
+                                  showMeteors ? 'bg-amber-400 text-black' : 'bg-zinc-900 text-zinc-400'
+                                }`}
+                              >
+                                ☄ Meteors
+                              </button>
+                              <button
+                                onClick={() => {
+                                  haptics.light();
+                                  setShowTracers(!showTracers);
+                                }}
+                                className={`px-2 py-1.5 rounded-lg text-[10px] font-mono uppercase font-bold transition-all active:scale-95 ${
+                                  showTracers ? 'bg-white text-black' : 'bg-zinc-900 text-zinc-400'
+                                }`}
+                              >
+                                ◎ Traces
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* TAB 3: MATERIALS & GEOLOGY */}
+                      {mobileDrawerTab === 'materials' && (
+                        <div className="space-y-3 animate-in fade-in duration-200">
+                          <div className="bg-black/80 border border-zinc-800 rounded-xl p-3 space-y-2.5">
+                            <div className="text-[10px] font-mono uppercase text-amber-400 font-semibold">
+                              Geological Stratification & Core Layers
+                            </div>
+                            {selectedPlanet.internalLayers.map((layer) => (
+                              <div key={layer.layer} className="border-l-2 border-amber-400/80 pl-2.5 py-1 bg-black/40 rounded-r-lg">
+                                <div className="text-xs font-bold text-white">{layer.layer}</div>
+                                <div className="text-[11px] text-zinc-300 mt-0.5 leading-relaxed">{layer.detail}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* TAB 4: CADET TRIVIA QUIZ */}
+                      {mobileDrawerTab === 'quiz' && (
+                        <div className="space-y-3 animate-in fade-in duration-200">
+                          <div className="bg-black/80 border border-zinc-800 rounded-xl p-3 space-y-2.5">
+                            <div className="flex items-center justify-between text-[10px] font-mono text-zinc-400 uppercase">
+                              <span>Mission Evaluation</span>
+                              <span className="text-amber-400 font-bold">Question {quizIndex + 1} of {selectedPlanet.quizQuestions.length}</span>
+                            </div>
+                            <p className="text-sm font-semibold text-white leading-snug">
+                              {currentQuiz.question}
+                            </p>
+                            <div className="space-y-2 pt-1">
+                              {currentQuiz.options.map((opt, idx) => {
+                                const isChosen = selectedQuizAnswer === idx;
+                                const isCorrect = idx === currentQuiz.correctIndex;
+                                return (
+                                  <button
+                                    key={idx}
+                                    onClick={() => {
+                                      if (selectedQuizAnswer !== null) return;
+                                      setSelectedQuizAnswer(idx);
+                                      if (isCorrect) {
+                                        soundFX.playSuccessChime();
+                                        if (!answeredKeys[quizKey]) {
+                                          setAnsweredKeys((prev) => ({ ...prev, [quizKey]: true }));
+                                          addXp(30, `Correct answer on ${selectedPlanet.name} Quiz!`);
+                                        }
+                                      } else {
+                                        soundFX.playAlert();
+                                      }
+                                    }}
+                                    className={`w-full text-left p-3 rounded-xl text-xs border transition-all active:scale-95 flex items-center justify-between ${
+                                      selectedQuizAnswer === null
+                                        ? 'bg-zinc-950 border-zinc-800 hover:border-[#ff3b21] text-zinc-200'
+                                        : isChosen && isCorrect
+                                        ? 'bg-emerald-950/60 border-emerald-400 text-emerald-200 font-bold'
+                                        : isChosen && !isCorrect
+                                        ? 'bg-rose-950/60 border-rose-400 text-rose-200'
+                                        : isCorrect
+                                        ? 'bg-emerald-950/30 border-emerald-500/50 text-emerald-300'
+                                        : 'bg-zinc-950/50 border-zinc-900 text-zinc-500'
+                                    }`}
+                                  >
+                                    <span>{opt}</span>
+                                    {selectedQuizAnswer !== null && isCorrect && (
+                                      <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+                                    )}
+                                  </button>
+                                );
+                              })}
+                            </div>
+
+                            {selectedQuizAnswer !== null && (
+                              <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-xs text-zinc-300 leading-relaxed animate-in fade-in duration-200">
+                                💡 <strong className="text-white">Scientific Context:</strong> {currentQuiz.explanation}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* TAB 5: HISTORIC MISSIONS */}
+                      {mobileDrawerTab === 'missions' && (
+                        <div className="space-y-3 animate-in fade-in duration-200">
+                          <div className="bg-black/80 border border-zinc-800 rounded-xl p-3 space-y-2">
+                            <div className="text-[10px] font-mono uppercase text-cyan-400 font-semibold">
+                              Space Agency Expeditions & Probes
+                            </div>
+                            <div className="space-y-2">
+                              {selectedPlanet.activeMissions.map((missionName) => (
+                                <div key={missionName} className="border-l-2 border-[#ff3b21] pl-2.5 py-1 bg-black/40 rounded-r-lg">
+                                  <div className="text-xs font-bold text-white">{missionName}</div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {viewMode === 'spacecraft' && (
+                    <>
+                      {mobileDrawerTab === 'subsystems' && (
+                        <div className="space-y-2.5 animate-in fade-in duration-200">
+                          <div className="text-[10px] font-mono uppercase text-zinc-400">
+                            Tap Subsystem to Target & Scan:
+                          </div>
+                          {selectedCraft.hotspots.map((h) => {
+                            const isScanned = scannedHotspots.includes(h.id);
+                            const isCurrent = activeHotspot?.id === h.id;
+                            return (
+                              <button
+                                key={h.id}
+                                onClick={() => handleSelectHotspot(h)}
+                                className={`w-full text-left p-3 rounded-xl border transition-all active:scale-95 flex items-center justify-between ${
+                                  isCurrent
+                                    ? 'bg-amber-500/20 border-amber-400'
+                                    : 'bg-black border-zinc-800'
+                                }`}
+                              >
+                                <div>
+                                  <div className="text-xs font-semibold text-white">{h.name}</div>
+                                  <div className="text-[11px] text-amber-300/90">{h.role}</div>
+                                </div>
+                                <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full shrink-0 ${
+                                  isScanned ? 'bg-emerald-500/20 text-emerald-300' : 'bg-cyan-500/20 text-cyan-300'
+                                }`}>
+                                  {isScanned ? '✓ Scanned' : 'Scan'}
+                                </span>
+                              </button>
+                            );
+                          })}
+
+                          {activeHotspot && (
+                            <div className="bg-black border border-zinc-800 rounded-xl p-3 space-y-2 mt-2">
+                              <div className="text-xs font-mono text-cyan-400 font-semibold">{activeHotspot.name}</div>
+                              <p className="text-xs text-zinc-200 leading-relaxed">{activeHotspot.plainEnglish}</p>
+                              <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-2 text-[11px] font-mono text-emerald-300">
+                                ⚙️ {activeHotspot.technicalFact}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {mobileDrawerTab === 'specs' && (
+                        <div className="space-y-2.5 animate-in fade-in duration-200">
+                          <div className="grid grid-cols-2 gap-2 font-mono">
+                            <div className="bg-black border border-zinc-800 rounded-xl p-2.5">
+                              <div className="text-[9px] text-zinc-400 uppercase">LAUNCH YEAR</div>
+                              <div className="text-xs font-bold text-white mt-0.5">{selectedCraft.year}</div>
+                            </div>
+                            <div className="bg-black border border-zinc-800 rounded-xl p-2.5">
+                              <div className="text-[9px] text-zinc-400 uppercase">DESTINATION</div>
+                              <div className="text-xs font-bold text-amber-300 mt-0.5 truncate">{selectedCraft.destination}</div>
+                            </div>
+                            <div className="bg-black border border-zinc-800 rounded-xl p-2.5">
+                              <div className="text-[9px] text-zinc-400 uppercase">MISSION STATUS</div>
+                              <div className="text-xs font-bold text-cyan-300 mt-0.5 truncate">{selectedCraft.status}</div>
+                            </div>
+                            <div className="bg-black border border-zinc-800 rounded-xl p-2.5">
+                              <div className="text-[9px] text-zinc-400 uppercase">MAX SPEED</div>
+                              <div className="text-xs font-bold text-emerald-400 mt-0.5">{selectedCraft.maxSpeed}</div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {/* Return to 3D View Button */}
+                  <button
+                    onClick={() => {
+                      haptics.light();
+                      setIsMobileDrawerOpen(false);
+                    }}
+                    className="w-full py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-xs font-mono uppercase font-bold text-white flex items-center justify-center gap-2 active:scale-95 transition-all mt-3"
+                  >
+                    <Orbit className="h-3.5 w-3.5 text-cyan-400" />
+                    <span>Return to Full 3D Interactive View</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* BOTTOM DOCK */}
           {!isTelemetryHidden && (
             <>
-              {/* Solar System View: Full 9-Planet Dock Strip */}
+              {/* Solar System View: Full 11-Planet Dock Strip (Swipeable on Mobile) */}
               {viewMode === 'solar-system' && (
-                <div className="fixed bottom-4 inset-x-4 max-w-5xl mx-auto z-20 pointer-events-auto">
-                  <div className="holo-panel-3d border border-zinc-800/90 rounded-2xl p-2.5 shadow-2xl backdrop-blur-xl">
-                    <div className="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-11 gap-1.5">
+                <div className="fixed bottom-16 sm:bottom-4 inset-x-2 sm:inset-x-4 max-w-5xl mx-auto z-20 pointer-events-auto">
+                  <div className="holo-panel-3d border border-zinc-800/90 rounded-2xl p-2 sm:p-2.5 shadow-2xl backdrop-blur-xl">
+                    <div className="flex lg:grid lg:grid-cols-11 gap-1.5 overflow-x-auto no-scrollbar py-0.5">
                       {SOLAR_SYSTEM_PLANETS.map((planet) => {
                         const active = selectedPlanet.id === planet.id;
                         return (
                           <button
                             key={planet.id}
-                            onClick={() => handleSelectPlanetAndZoom(planet)}
-                            className={`micro-card py-2 px-1.5 rounded-xl border text-center transition-all ${
+                            onClick={() => {
+                              haptics.light();
+                              handleSelectPlanetAndZoom(planet);
+                            }}
+                            className={`micro-card py-2 px-2.5 sm:px-1.5 rounded-xl border text-center transition-all shrink-0 w-20 sm:w-auto active:scale-95 ${
                               active
                                 ? 'bg-[#ff3b21]/20 border-[#ff3b21] shadow-md shadow-[#ff3b21]/20'
                                 : 'bg-black/60 border-zinc-800 hover:border-zinc-700 hover:bg-zinc-900/60'
@@ -2969,24 +3095,27 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
 
               {/* Close-Up View: Sleek Floating Bottom Planet Cycler */}
               {viewMode === 'planet-closeup' && (
-                <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-20 pointer-events-auto flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/85 backdrop-blur-xl border border-zinc-800 shadow-2xl">
+                <div className="fixed bottom-16 sm:bottom-4 left-1/2 -translate-x-1/2 z-20 pointer-events-auto flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 rounded-full bg-black/90 backdrop-blur-xl border border-zinc-800 shadow-2xl max-w-[calc(100vw-1rem)]">
                   <button
                     onClick={() => handleCyclePlanet('prev')}
-                    className="p-1 rounded-full bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-white transition-colors"
+                    className="p-1 rounded-full bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-white transition-colors shrink-0 active:scale-90"
                     title="Previous Planet"
                   >
                     <ChevronLeft className="h-4 w-4" />
                   </button>
 
-                  <div className="flex items-center gap-1.5 px-2">
+                  <div className="hidden xs:flex items-center gap-1.5 px-1 shrink-0">
                     {SOLAR_SYSTEM_PLANETS.map((p) => {
                       const active = p.id === selectedPlanet.id;
                       return (
                         <button
                           key={p.id}
-                          onClick={() => handleSelectPlanetAndZoom(p)}
+                          onClick={() => {
+                            haptics.selection();
+                            handleSelectPlanetAndZoom(p);
+                          }}
                           className={`h-2.5 rounded-full transition-all ${
-                            active ? 'w-6 bg-[#ff3b21]' : 'w-2 bg-zinc-700 hover:bg-zinc-500'
+                            active ? 'w-5 sm:w-6 bg-[#ff3b21]' : 'w-2 bg-zinc-700 hover:bg-zinc-500'
                           }`}
                           title={p.name}
                         />
@@ -2994,17 +3123,90 @@ export const CosmicExplorer3D: React.FC<CosmicExplorer3DProps> = ({
                     })}
                   </div>
 
+                  <span className="text-xs font-mono font-bold text-white px-2.5 py-0.5 rounded-full bg-zinc-900 border border-zinc-800 shrink-0">
+                    {selectedPlanet.name.split(' ')[0]}
+                  </span>
+
                   <button
                     onClick={() => handleCyclePlanet('next')}
-                    className="p-1 rounded-full bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-white transition-colors"
+                    className="p-1 rounded-full bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-white transition-colors shrink-0 active:scale-90"
                     title="Next Planet"
                   >
                     <ChevronRight className="h-4 w-4" />
                   </button>
+
+                  {/* Mobile Drawer Trigger Pill */}
+                  {isMobile && (
+                    <button
+                      onClick={() => {
+                        haptics.medium();
+                        setIsMobileDrawerOpen(true);
+                      }}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#ff3b21] text-white text-[10px] font-mono font-bold uppercase tracking-wider shadow-lg active:scale-95 transition-all ml-1 shrink-0"
+                    >
+                      <ShieldAlert className="h-3 w-3" />
+                      <span>Deck</span>
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* Spacecraft View: Sleek Floating Bottom Craft Cycler */}
+              {viewMode === 'spacecraft' && (
+                <div className="fixed bottom-16 sm:bottom-4 left-1/2 -translate-x-1/2 z-20 pointer-events-auto flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 rounded-full bg-black/90 backdrop-blur-xl border border-zinc-800 shadow-2xl max-w-[calc(100vw-1rem)]">
+                  <button
+                    onClick={() => {
+                      haptics.selection();
+                      soundFX.playClick();
+                      const cur = SPACECRAFT_FLEET.findIndex((c) => c.id === selectedCraft.id);
+                      let nxt = cur - 1;
+                      if (nxt < 0) nxt = SPACECRAFT_FLEET.length - 1;
+                      handleSelectCraft(SPACECRAFT_FLEET[nxt]);
+                    }}
+                    className="p-1 rounded-full bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-white transition-colors shrink-0 active:scale-90"
+                    title="Previous Craft"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+
+                  <span className="text-xs font-mono font-bold text-amber-400 px-2.5 py-0.5 rounded-full bg-zinc-900 border border-zinc-800 shrink-0 truncate max-w-[140px] sm:max-w-none">
+                    {selectedCraft.name}
+                  </span>
+
+                  <button
+                    onClick={() => {
+                      haptics.selection();
+                      soundFX.playClick();
+                      const cur = SPACECRAFT_FLEET.findIndex((c) => c.id === selectedCraft.id);
+                      let nxt = cur + 1;
+                      if (nxt >= SPACECRAFT_FLEET.length) nxt = 0;
+                      handleSelectCraft(SPACECRAFT_FLEET[nxt]);
+                    }}
+                    className="p-1 rounded-full bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-white transition-colors shrink-0 active:scale-90"
+                    title="Next Craft"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+
+                  {/* Mobile Drawer Trigger Pill */}
+                  {isMobile && (
+                    <button
+                      onClick={() => {
+                        haptics.medium();
+                        setMobileDrawerTab('subsystems');
+                        setIsMobileDrawerOpen(true);
+                      }}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-400 text-black text-[10px] font-mono font-bold uppercase tracking-wider shadow-lg active:scale-95 transition-all ml-1 shrink-0"
+                    >
+                      <Rocket className="h-3 w-3" />
+                      <span>Inspect</span>
+                    </button>
+                  )}
                 </div>
               )}
             </>
           )}
+
         </div>
       )}
     </div>
